@@ -64,7 +64,7 @@ jobs:
           if-no-files-found: warn
 
   instrumentation:
-    name: Instrumentation tests (API 35 emulator)
+    name: Instrumentation tests (API 30 emulator)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -93,10 +93,10 @@ jobs:
       - name: Run instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
-          target: google_apis
+          api-level: 30
+          target: default
           arch: x86_64
-          profile: pixel_6
+          profile: pixel_4
           disable-animations: true
           emulator-boot-timeout: 1200
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
