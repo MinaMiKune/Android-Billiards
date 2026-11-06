@@ -13,15 +13,18 @@ import kotlin.math.sin
 
 object GlUtil {
     fun compile(type: Int, source: String): Int {
+        // GLSL requires #version on the very first line. The shader constants are
+        // raw strings with a leading newline, so normalize before uploading.
+        val cleaned = source.trimIndent().trim()
         val shader = GLES30.glCreateShader(type)
-        GLES30.glShaderSource(shader, source)
+        GLES30.glShaderSource(shader, cleaned)
         GLES30.glCompileShader(shader)
         val result = IntArray(1)
         GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, result, 0)
         if (result[0] == 0) {
             val log = GLES30.glGetShaderInfoLog(shader)
             GLES30.glDeleteShader(shader)
-            throw IllegalStateException("Shader compile failed: $log\n$source")
+            throw IllegalStateException("Shader compile failed: $log\n$cleaned")
         }
         return shader
     }
