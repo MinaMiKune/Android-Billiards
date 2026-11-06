@@ -8,6 +8,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.minamikune.billiards.data.Prefs
 import com.minamikune.billiards.game.GameMode
 import com.minamikune.billiards.game.MatchEngine
+import com.minamikune.billiards.platform.GameConfig
+import com.minamikune.billiards.resources.FontSet
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -39,6 +41,13 @@ class MenuRenderTest {
 
         menu.showResult(true, "Cleared the table", 21, 0)
         for ((w, h) in sizes()) draw(menu, w, h)
+    }
+
+    @Test
+    fun splashDrawsAtEveryStartupSize() {
+        val splash = SplashView(context, GameConfig.DEFAULT, FontSet())
+        splash.start()
+        for ((w, h) in sizes()) draw(splash, w, h)
     }
 
     @Test

@@ -41,6 +41,7 @@ class TableRenderer(
     fun interface OnContextReady { fun ready() }
     var onContextReady: OnContextReady? = null
 
+    private val pool = GlResourcePool()
     private val lock = Any()
     private var proj = Mat4.identity()
     private var view = Mat4.identity()
@@ -112,6 +113,9 @@ class TableRenderer(
         // A new EGL context invalidates cached program/uniform ids from the old one.
         ready = false
         uniforms.clear()
+        // Program/mesh/texture ids from the previous EGL context are dead. Drop them
+        // without deleting (the driver already owns/destroyed them).
+        pool.beginContext()
         GLES30.glClearColor(0.020f, 0.024f, 0.028f, 1f)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthFunc(GLES30.GL_LEQUAL)
@@ -119,28 +123,32 @@ class TableRenderer(
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glDisable(GLES30.GL_CULL_FACE)
 
-        ballProgram = GlUtil.program(BALL_VERT, BALL_FRAG)
-        tableProgram = GlUtil.program(TABLE_VERT, TABLE_FRAG)
-        shadowProgram = GlUtil.program(SIMPLE_VERT, SHADOW_FRAG)
-        lineProgram = GlUtil.program(LINE_VERT, LINE_FRAG)
+        ballProgram = pool.program("ball", BALL_VERT, BALL_FRAG)
+        tableProgram = pool.program("table", TABLE_VERT, TABLE_FRAG)
+        shadowProgram = pool.program("shadow", SIMPLE_VERT, SHADOW_FRAG)
+        lineProgram = pool.program("line", LINE_VERT, LINE_FRAG)
 
-        sphereMesh = Meshes.sphere(if (highQuality) 32 else 20, if (highQuality) 48 else 30)
-        lowSphereMesh = Meshes.sphere(12, 18)
-        boxMesh = Meshes.box()
-        planeMesh = Meshes.plane()
-        discMesh = Meshes.disc()
-        ringMesh = Meshes.ring(0.86f)
-        cueMesh = Meshes.cueCylinder(20)
-        quadMesh = Meshes.quad()
+        sphereMesh = pool.mesh("sphere") {
+            Meshes.sphere(if (highQuality) 32 else 20, if (highQuality) 48 else 30)
+        }
+        lowSphereMesh = pool.mesh("sphere-low") { Meshes.sphere(12, 18) }
+        boxMesh = pool.mesh("box") { Meshes.box() }
+        planeMesh = pool.mesh("plane") { Meshes.plane() }
+        discMesh = pool.mesh("disc") { Meshes.disc() }
+        ringMesh = pool.mesh("ring") { Meshes.ring(0.86f) }
+        cueMesh = pool.mesh("cue") { Meshes.cueCylinder(20) }
+        quadMesh = pool.mesh("quad") { Meshes.quad() }
 
-        ballTextures = IntArray(16) { GlUtil.texture(BallArt.ball(it), repeat = false) }
-        clothTexture = GlUtil.texture(BallArt.cloth(), repeat = true)
-        woodTexture = GlUtil.texture(BallArt.wood(), repeat = true)
-        shadowTexture = GlUtil.texture(BallArt.shadow(), repeat = false)
-        floorTexture = GlUtil.texture(BallArt.floor(), repeat = true)
+        ballTextures = IntArray(16) { index ->
+            pool.texture("ball-$index") { GlUtil.texture(BallArt.ball(index), repeat = false) }
+        }
+        clothTexture = pool.texture("cloth") { GlUtil.texture(BallArt.cloth(), repeat = true) }
+        woodTexture = pool.texture("wood") { GlUtil.texture(BallArt.wood(), repeat = true) }
+        shadowTexture = pool.texture("shadow") { GlUtil.texture(BallArt.shadow(), repeat = false) }
+        floorTexture = pool.texture("floor") { GlUtil.texture(BallArt.floor(), repeat = true) }
         val white = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
         white.eraseColor(android.graphics.Color.WHITE)
-        whiteTexture = GlUtil.texture(white, repeat = false)
+        whiteTexture = pool.texture("white") { GlUtil.texture(white, repeat = false) }
 
         val ids = IntArray(1)
         GLES30.glGenVertexArrays(1, ids, 0)

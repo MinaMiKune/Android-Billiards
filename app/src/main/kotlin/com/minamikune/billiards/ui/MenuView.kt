@@ -7,7 +7,6 @@ import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
@@ -15,6 +14,7 @@ import com.minamikune.billiards.data.Prefs
 import com.minamikune.billiards.game.GameMode
 import com.minamikune.billiards.game.MatchSnapshot
 import com.minamikune.billiards.game.SessionState
+import com.minamikune.billiards.resources.FontSet
 import kotlin.math.max
 import kotlin.math.min
 
@@ -24,7 +24,11 @@ import kotlin.math.min
  * current size and display insets, which keeps it usable on phones, foldables and
  * tablets in both orientations.
  */
-class MenuView(context: Context, private val prefs: Prefs) : View(context) {
+class MenuView(
+    context: Context,
+    private val prefs: Prefs,
+    private val fonts: FontSet = FontSet(),
+) : View(context) {
     @Suppress("unused")
     constructor(context: Context) : this(context, Prefs(context))
 
@@ -51,19 +55,19 @@ class MenuView(context: Context, private val prefs: Prefs) : View(context) {
     private var safeR = 0
     private var safeB = 0
     private val d = resources.displayMetrics.density
-    private val scaled = resources.displayMetrics.scaledDensity
+    private val scaled = d * resources.configuration.fontScale
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        typeface = fonts.body
         color = CREAM
     }
     private val bold = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+        typeface = fonts.label
         color = CREAM
     }
     private val display = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+        typeface = fonts.display
         color = CREAM
     }
 

@@ -22,6 +22,22 @@ class GameLoopTest {
     }
 
     @Test
+    fun pauseAndResumeKeepWorkerAlive() {
+        val engine = MatchEngine(GameMode.PRACTICE)
+        val ready = CountDownLatch(1)
+        val loop = GameLoop(engine, { ready.countDown() }, {})
+        loop.start()
+        assertTrue(ready.await(2, TimeUnit.SECONDS))
+        loop.pause()
+        assertTrue(loop.paused)
+        assertTrue(loop.running)
+        loop.resume()
+        assertFalse(loop.paused)
+        loop.stop()
+        assertFalse(loop.running)
+    }
+
+    @Test
     fun submittedCommandIsAppliedOnSimulationThread() {
         val engine = MatchEngine(GameMode.PRACTICE)
         val ready = CountDownLatch(1)

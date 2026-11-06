@@ -21,7 +21,7 @@ class SaveStore(context: Context) {
 
     fun save(s: MatchSnapshot) {
         try {
-            prefs.edit().putString(KEY, encode(s)).apply()
+            prefs.edit().putString(KEY, encodeToJson(s)).apply()
         } catch (_: Throwable) {
             // A failed save must not take the game down.
         }
@@ -29,8 +29,18 @@ class SaveStore(context: Context) {
 
     fun load(): MatchSnapshot? {
         val raw = prefs.getString(KEY, null) ?: return null
+        return decode(raw)
+    }
+
+    /**
+     * Bundle-safe codec used by `Activity.onSaveInstanceState`. The payload is the
+     * same versioned JSON as [save], so both restoration paths share validation.
+     */
+    fun encode(s: MatchSnapshot): String = encodeToJson(s)
+
+    fun decode(raw: String): MatchSnapshot? {
         return try {
-            decode(JSONObject(raw))
+            decodeJson(JSONObject(raw))
         } catch (_: Throwable) {
             null
         }
@@ -40,7 +50,7 @@ class SaveStore(context: Context) {
         prefs.edit().remove(KEY).apply()
     }
 
-    private fun encode(s: MatchSnapshot): String {
+    private fun encodeToJson(s: MatchSnapshot): String {
         val o = JSONObject()
         o.put("version", 1)
         o.put("mode", s.mode.name)
@@ -82,7 +92,7 @@ class SaveStore(context: Context) {
         return o.toString()
     }
 
-    private fun decode(o: JSONObject): MatchSnapshot? {
+    private fun decodeJson(o: JSONObject): MatchSnapshot? {
         if (o.optInt("version", 0) != 1) return null
         val mode = runCatching { GameMode.valueOf(o.getString("mode")) }.getOrNull() ?: return null
         val state = runCatching { SessionState.valueOf(o.getString("state")) }.getOrNull() ?: return null

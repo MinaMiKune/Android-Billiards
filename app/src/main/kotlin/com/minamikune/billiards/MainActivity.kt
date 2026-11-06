@@ -25,10 +25,12 @@ import com.minamikune.billiards.game.MatchSnapshot
 import com.minamikune.billiards.game.SessionState
 import com.minamikune.billiards.gl.TableRenderer
 import com.minamikune.billiards.haptics.Haptics
+import com.minamikune.billiards.platform.ActivityResources
 import com.minamikune.billiards.physics.PhysicsEvent
 import com.minamikune.billiards.physics.Vec2
 import com.minamikune.billiards.ui.GameHudView
 import com.minamikune.billiards.ui.MenuView
+import com.minamikune.billiards.ui.SplashView
 
 /**
  * Single activity host. The GL surface, simulation thread and Canvas HUD are kept
@@ -44,6 +46,8 @@ class MainActivity : Activity() {
     private lateinit var sound: SoundBank
     private lateinit var haptics: Haptics
     private lateinit var saves: SaveStore
+    private lateinit var activityResources: ActivityResources
+    private lateinit var splash: SplashView
 
     private var surface: GLSurfaceView? = null
     private var renderer: TableRenderer? = null
@@ -59,20 +63,22 @@ class MainActivity : Activity() {
     private var lastSavedKey = ""
     private var lastQuality = 0
     private var resumed = false
+    private var splashActive = true
 
     private val main = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        prefs = Prefs(this)
-        sound = SoundBank(this)
+        val container = (application as BilliardsApplication).container
+        prefs = container.prefs
+        saves = container.saves
+        activityResources = container.createActivityResources()
+        sound = activityResources.sound
         sound.enabled = prefs.soundEnabled
         haptics = Haptics(this, prefs)
-        saves = SaveStore(this)
         lastQuality = prefs.quality
 
         window.setBackgroundDrawable(ColorDrawable(Color.BLACK))
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
@@ -81,7 +87,8 @@ class MainActivity : Activity() {
         // been installed; calling it before setContentView crashes on API 35.
         applyImmersive()
 
-        hud = GameHudView(this).apply {
+        hud = GameHudView(this, activityResources.fonts).apply {
+            id = R.id.game_hud
             visibility = View.GONE
             screenToTable = { x, y -> renderer?.screenToTable(x, y) }
             onAimPoint = ::aimAt
@@ -96,7 +103,8 @@ class MainActivity : Activity() {
             }
             onUiTap = { uiTap() }
         }
-        menu = MenuView(this, prefs).apply {
+        menu = MenuView(this, prefs, activityResources.fonts).apply {
+            id = R.id.game_menu
             visibility = View.VISIBLE
             onAction = ::onMenuAction
             onSettingsChanged = ::onSettingsChanged
@@ -107,9 +115,7 @@ class MainActivity : Activity() {
 
         demoEngine = MatchEngine(GameMode.PRACTICE, startsWithBreak = false)
         installSurface(demoEngine!!)
-        menu.showMain(saves.hasSave())
-        menu.visibility = View.VISIBLE
-        hud.visibility = View.GONE
+        restoreState(savedInstanceState)
 
         root.setOnApplyWindowInsetsListener { _, insets ->
             val l: Int
@@ -142,6 +148,50 @@ class MainActivity : Activity() {
                 android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
             ) { handleBack() }
         }
+
+        splash = SplashView(this, activityResources.config, activityResources.fonts).apply {
+            id = R.id.game_splash
+            onFinished = { finishSplash() }
+        }
+        root.addView(splash, match())
+        splash.start()
+    }
+
+    /**
+     * Rebuilds the visible screen after Activity recreation. A live match is restored
+     * from the instance-state JSON first and reopened paused, never auto-running
+     * behind the startup overlay. SharedPreferences remains the process-death fallback
+     * offered as CONTINUE from the main menu.
+     */
+    private fun restoreState(state: Bundle?) {
+        if (state == null) {
+            menu.showMain(saves.hasSave())
+            return
+        }
+        val restored = state.getString(KEY_SNAPSHOT)?.let { saves.decode(it) }
+        if (restored != null) {
+            startGame(restored.mode, restored, startPaused = true)
+            return
+        }
+        menu.showMain(saves.hasSave())
+        when (state.getString(KEY_SCREEN)) {
+            "SETTINGS" -> menu.showSettings()
+            "HELP" -> menu.showHelp()
+        }
+    }
+
+    private fun finishSplash() {
+        if (!splashActive || isFinishing || isDestroyed) return
+        splashActive = false
+        splash.onFinished = null
+        root.removeView(splash)
+        if (gameActive && menu.visibility != View.VISIBLE) {
+            openPauseMenu()
+        } else {
+            menu.visibility = View.VISIBLE
+        }
+        updateKeepScreenOn()
+        applyImmersive()
     }
 
     private fun match(): FrameLayout.LayoutParams =
@@ -156,7 +206,7 @@ class MainActivity : Activity() {
             2 -> false
             else -> {
                 val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
-                if (am.isLowRamDevice) false else am.memoryClass >= 256
+                if (am.isLowRamDevice) false else am.memoryClass >= activityResources.config.highQualityMemoryClass
             }
         }
     }
@@ -189,7 +239,7 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------- game flow
 
-    private fun startGame(mode: GameMode, restored: MatchSnapshot? = null) {
+    private fun startGame(mode: GameMode, restored: MatchSnapshot? = null, startPaused: Boolean = false) {
         loop?.stop()
         loop = null
         loopGeneration++
@@ -237,9 +287,22 @@ class MainActivity : Activity() {
                     }
                 }
             },
+            snapshotIntervalSeconds = activityResources.config.snapshotIntervalSeconds,
         )
         loop = gl
         gl.start()
+        if (startPaused) {
+            gl.pause()
+            val paused = currentSnapshot()
+            if (paused != null) {
+                hud.visibility = View.GONE
+                menu.showPause(paused)
+                menu.visibility = View.VISIBLE
+            }
+        } else {
+            menu.visibility = View.GONE
+        }
+        updateKeepScreenOn()
         val initial = currentSnapshot()
         if (initial != null && isStable(initial)) {
             stableSnapshot = initial
@@ -255,6 +318,7 @@ class MainActivity : Activity() {
         saves.clear()
         stableSnapshot = null
         hud.visibility = View.GONE
+        updateKeepScreenOn()
         prefs.gamesPlayed = prefs.gamesPlayed + 1
         val humanWon = s.winner == 0
         if (s.mode == GameMode.VS_AI && humanWon) prefs.wins = prefs.wins + 1
@@ -302,6 +366,7 @@ class MainActivity : Activity() {
         hud.visibility = View.GONE
         menu.showPause(s)
         menu.visibility = View.VISIBLE
+        updateKeepScreenOn()
         sound.playUi()
     }
 
@@ -311,6 +376,7 @@ class MainActivity : Activity() {
         hud.visibility = View.VISIBLE
         currentSnapshot()?.let { hud.setSnapshot(it) }
         loop?.resume()
+        updateKeepScreenOn()
     }
 
     private fun returnToMain() {
@@ -326,6 +392,7 @@ class MainActivity : Activity() {
         hud.visibility = View.GONE
         menu.showMain(saves.hasSave())
         menu.visibility = View.VISIBLE
+        updateKeepScreenOn()
     }
 
     private fun onMenuAction(action: MenuView.Action) {
@@ -397,9 +464,10 @@ class MainActivity : Activity() {
         resumed = true
         surface?.onResume()
         applyImmersive()
-        if (gameActive && menu.visibility != View.VISIBLE) {
+        if (!splashActive && gameActive && menu.visibility != View.VISIBLE) {
             openPauseMenu()
         }
+        updateKeepScreenOn()
     }
 
     override fun onPause() {
@@ -407,7 +475,7 @@ class MainActivity : Activity() {
         resumed = false
         loop?.pause()
         saveBeforeLeaving()
-        if (gameActive && menu.visibility != View.VISIBLE) {
+        if (!splashActive && gameActive && menu.visibility != View.VISIBLE) {
             val s = currentSnapshot()
             if (s != null) {
                 hud.visibility = View.GONE
@@ -416,6 +484,7 @@ class MainActivity : Activity() {
             }
         }
         surface?.onPause()
+        updateKeepScreenOn()
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
@@ -424,6 +493,7 @@ class MainActivity : Activity() {
         root.requestApplyInsets()
         hud.invalidate()
         menu.invalidate()
+        if (splashActive) splash.invalidate()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -443,6 +513,10 @@ class MainActivity : Activity() {
     }
 
     private fun handleBack() {
+        if (splashActive) {
+            finishSplash()
+            return
+        }
         if (menu.visibility == View.VISIBLE) {
             if (!menu.handleBack()) finish()
         } else if (gameActive) {
@@ -452,17 +526,36 @@ class MainActivity : Activity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        val encoded = if (gameActive) {
+            currentSnapshot()?.let { runCatching { saves.encode(it) }.getOrNull() }
+        } else {
+            null
+        }
+        if (encoded != null) outState.putString(KEY_SNAPSHOT, encoded)
+        outState.putString(KEY_SCREEN, menu.screen.name)
+    }
+
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
         loop?.stop()
         loop = null
         loopGeneration++
-        try {
-            sound.release()
-        } catch (_: Throwable) {
-            Unit
-        }
+        if (::splash.isInitialized) splash.onFinished = null
+        if (::activityResources.isInitialized) activityResources.close()
         super.onDestroy()
+    }
+
+    /** Keep the display awake only while a live table is actually visible. */
+    private fun updateKeepScreenOn() {
+        if (!::menu.isInitialized) return
+        val keepOn = resumed && gameActive && !splashActive && menu.visibility != View.VISIBLE
+        if (keepOn) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     // ---------------------------------------------------------------- window
@@ -497,5 +590,10 @@ class MainActivity : Activity() {
             window.isStatusBarContrastEnforced = false
             window.isNavigationBarContrastEnforced = false
         }
+    }
+
+    private companion object {
+        const val KEY_SNAPSHOT = "activity.match.snapshot"
+        const val KEY_SCREEN = "activity.menu.screen"
     }
 }

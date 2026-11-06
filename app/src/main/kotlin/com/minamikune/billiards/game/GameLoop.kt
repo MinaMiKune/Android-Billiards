@@ -14,7 +14,9 @@ class GameLoop(
     private val engine: MatchEngine,
     private val onSnapshot: (MatchSnapshot) -> Unit,
     private val onFeedback: (List<PhysicsEvent>) -> Unit,
+    snapshotIntervalSeconds: Double = 0.075,
 ) {
+    private val snapshotInterval = snapshotIntervalSeconds.coerceIn(0.033, 0.5)
     @Volatile var paused = false
         private set
     @Volatile var running = true
@@ -129,7 +131,7 @@ class GameLoop(
             if (steps >= 140) accumulator = 0.0
 
             snapshotClock += dt
-            if (snapshotClock >= 0.075) {
+            if (snapshotClock >= snapshotInterval) {
                 snapshotClock = 0.0
                 val snap = synchronized(engine) { engine.snapshot() }
                 latest = snap

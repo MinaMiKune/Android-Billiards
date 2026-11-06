@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Stable ids for instrumentation and accessibility tooling. -->
+    <item name="game_hud" type="id" />
+    <item name="game_menu" type="id" />
+    <item name="game_splash" type="id" />
+</resources>

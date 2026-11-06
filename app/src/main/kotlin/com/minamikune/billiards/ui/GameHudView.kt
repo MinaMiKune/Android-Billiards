@@ -8,7 +8,6 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
 import com.minamikune.billiards.game.GameMode
@@ -16,6 +15,7 @@ import com.minamikune.billiards.game.MatchSnapshot
 import com.minamikune.billiards.game.SessionState
 import com.minamikune.billiards.physics.BallGroup
 import com.minamikune.billiards.physics.Vec2
+import com.minamikune.billiards.resources.FontSet
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -24,7 +24,12 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /** In-game heads-up display and touch controls, drawn over the GL table. */
-class GameHudView(context: Context) : View(context) {
+class GameHudView(
+    context: Context,
+    private val fonts: FontSet = FontSet(),
+) : View(context) {
+    @Suppress("unused")
+    constructor(context: Context) : this(context, FontSet())
 
     var snapshot: MatchSnapshot? = null
         private set
@@ -40,7 +45,7 @@ class GameHudView(context: Context) : View(context) {
     var screenToTable: ((Float, Float) -> Vec2?)? = null
 
     private val d = resources.displayMetrics.density
-    private val scaled = resources.displayMetrics.scaledDensity
+    private val scaled = d * resources.configuration.fontScale
     private var safeL = 0
     private var safeT = 0
     private var safeR = 0
@@ -48,15 +53,15 @@ class GameHudView(context: Context) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        typeface = fonts.body
         color = CREAM
     }
     private val bold = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+        typeface = fonts.label
         color = CREAM
     }
     private val number = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+        typeface = fonts.display
         textAlign = Paint.Align.CENTER
     }
 

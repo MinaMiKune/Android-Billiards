@@ -46,6 +46,9 @@ jobs:
       - name: Unit tests
         run: ./gradlew :core:test :app:testDebugUnitTest --stacktrace
 
+      - name: Lint and compile instrumentation tests
+        run: ./gradlew :app:lintDebug :app:compileDebugAndroidTestKotlin --stacktrace
+
       - name: Build debug and release APKs
         run: ./gradlew :app:assembleDebug :app:assembleRelease --stacktrace
 

@@ -79,6 +79,8 @@ class Mesh private constructor(
     private val ebo: Int,
     private val count: Int,
 ) {
+    private var released = false
+
     fun draw() {
         GLES30.glBindVertexArray(vao)
         GLES30.glDrawElements(GLES30.GL_TRIANGLES, count, GLES30.GL_UNSIGNED_SHORT, 0)
@@ -89,6 +91,14 @@ class Mesh private constructor(
         GLES30.glBindVertexArray(vao)
         GLES30.glDrawElements(GLES30.GL_LINES, count, GLES30.GL_UNSIGNED_SHORT, 0)
         GLES30.glBindVertexArray(0)
+    }
+
+    /** Deletes the VAO/VBO/EBO. Safe to call more than once. */
+    fun release() {
+        if (released) return
+        released = true
+        GLES30.glDeleteBuffers(2, intArrayOf(vbo, ebo), 0)
+        GLES30.glDeleteVertexArrays(1, intArrayOf(vao), 0)
     }
 
     companion object {

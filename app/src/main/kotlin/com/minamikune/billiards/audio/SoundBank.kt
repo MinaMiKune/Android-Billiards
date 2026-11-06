@@ -9,11 +9,11 @@ import kotlin.math.max
 import kotlin.math.min
 
 /** Small, pre-decoded sound bank. Impact volume/rate follows the simulated impulse. */
-class SoundBank(context: Context) {
+class SoundBank(context: Context, maxStreams: Int = 10) {
     var enabled: Boolean = true
 
     private val pool = SoundPool.Builder()
-        .setMaxStreams(10)
+        .setMaxStreams(maxStreams.coerceIn(4, 24))
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_GAME)
