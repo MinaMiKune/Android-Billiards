@@ -104,25 +104,28 @@
 - 技术决策：坐标映射进 core 单测；瞄准线 shader 加 `uModel`；所有大十六进制颜色
   显式 `toInt()`；低内存设备按 `ActivityManager` 选择画质。
 - 测试命令：`./gradlew :core:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin`。
-- 测试结果：core 32/32、app 2/2 通过；androidTest 编译通过。
-- 已知问题：仪器测试未在设备执行；无 Android 17 真机兼容性结论。
-- 未完成：CI、最终 APK 复核。
+- 测试结果：core 32/32、app 2/2 通过；androidTest 编译通过，并在 CI 的 API 35
+  ATD x86_64 模拟器上 4/4 通过。
+- 已知问题：未在 Android 17 真机执行；无真机兼容性结论。
+- 未完成：最终 APK 复核、真实设备验收。
 - 准入结论：静态与 JVM 测试通过，进入交付阶段。
 
 ## 阶段 7：CI、文档与交付
 
-- 实施：GitHub Actions 两阶段流水线（单元测试 + debug/release APK；API 35
+- 实施：GitHub Actions 两阶段流水线（单元测试 + debug/release APK；API 35 ATD
   模拟器仪器测试）；tag 发布 debug APK；README 和本报告。
 - 修改文件：`.github/workflows/android.yml`、`README.md`、`docs/STAGE_REPORT.md`。
 - 技术决策：CI 安装 Android 37 平台和 Build-Tools 37.0.0；仪器测试用 API 35
-  x86_64 模拟器；release 构建验证 R8，但不把签名密钥放进仓库，因此 tag 发布
-  可安装的 debug APK。
+  ATD x86_64 模拟器（软件渲染），以减少无 KVM runner 的启动时间；release 构建
+  验证 R8，但不把签名密钥放进仓库，因此 tag 发布可安装的 debug APK。
 - 测试命令：`./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug
   :app:assembleRelease`。
-- 测试结果：core 32/32、app 2/2 通过；debug APK 约 1.30 MiB，release APK 约 398 KiB；
+- 测试结果：core 32/32、app 2/2 通过；debug APK 约 1.30 MiB，release APK 约 399 KiB；
   lint 0 errors、1 warning（`mipmap-anydpi-v26` 的 ObsoleteSdkInt 冗余目录）。
-  仪器测试 APK 编译通过，未在设备执行。
-- 已知问题：CI 尚未在 GitHub 实际运行；本地无 Android 设备/模拟器。
+  GitHub Actions run 42154844717 全部成功：unit/APK job 成功，API 35 ATD
+  instrumentation job 4/4 通过。
+- 已知问题：未在真实 Android 17 设备上运行；模拟器为软件渲染，不能代替真机
+  性能与触觉验收。
 - 未完成：真实设备验收、性能剖析、在线多人。
 - 准入结论：代码、文档和 CI 配置完成；设备验收仍是后续工作。
 
@@ -141,9 +144,10 @@ export ANDROID_USER_HOME="$PWD/.android-home"
 
 - `:core:test`：32 tests，0 failures，0 errors。
 - `:app:testDebugUnitTest`：2 tests，0 failures，0 errors。
-- `:app:assembleDebug`：成功，`app/build/outputs/apk/debug/app-debug.apk`，1,367,103 bytes。
+- `:app:assembleDebug`：成功，`app/build/outputs/apk/debug/app-debug.apk`，1,367,239 bytes。
 - `:app:assembleRelease`：成功（R8 + shrinkResources），
-  `app/build/outputs/apk/release/app-release-unsigned.apk`，407,794 bytes。
+  `app/build/outputs/apk/release/app-release-unsigned.apk`，408,810 bytes。
 - `:app:lintDebug`：0 errors、1 warning（`mipmap-anydpi-v26` 冗余，见上）。
-- 仪器测试仅完成编译；本机没有 adb 设备、KVM 或 system image，因此不声称已执行
-  `connectedDebugAndroidTest`，也不声称完成 Android 17 真机认证。
+- 仪器测试：GitHub Actions run 42154844717 在 API 35 ATD x86_64 模拟器上执行
+  `connectedDebugAndroidTest`，4 tests、0 failures、0 errors。本机没有 adb 设备、
+  KVM 或 system image，因此未在本地重复执行，也不声称完成 Android 17 真机认证。
