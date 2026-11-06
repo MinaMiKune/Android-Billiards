@@ -73,11 +73,13 @@ class MainActivity : Activity() {
 
         window.setBackgroundDrawable(ColorDrawable(Color.BLACK))
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        applyImmersive()
 
         root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
         setContentView(root)
+        // The window's insets controller is only available after the decor view has
+        // been installed; calling it before setContentView crashes on API 35.
+        applyImmersive()
 
         hud = GameHudView(this).apply {
             visibility = View.GONE
