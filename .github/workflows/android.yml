@@ -1,0 +1,127 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Unit tests and APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-37 build-tools;37.0.0 platform-tools'
+
+      - name: Accept licenses
+        run: yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Make wrapper executable
+        run: chmod +x gradlew
+
+      - name: Unit tests
+        run: ./gradlew :core:test :app:testDebugUnitTest --stacktrace
+
+      - name: Build debug and release APKs
+        run: ./gradlew :app:assembleDebug :app:assembleRelease --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: billiards-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload release mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: billiards-release-mapping
+          path: app/build/outputs/mapping/release/
+          if-no-files-found: warn
+
+  instrumentation:
+    name: Instrumentation tests (API 35 emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-37 build-tools;37.0.0 platform-tools'
+
+      - name: Accept licenses
+        run: yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Make wrapper executable
+        run: chmod +x gradlew
+
+      - name: Run instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: ./gradlew :app:connectedDebugAndroidTest --stacktrace
+
+  release:
+    name: Publish debug APK for tag
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ build, instrumentation ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: billiards-debug-apk
+          path: artifacts
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/app-debug.apk
+          generate_release_notes: true
+          body: |
+            Break Point 桌球 — automated Android build.
+
+            The attached `app-debug.apk` is signed with the Android debug key and is
+            installable for testing. A release build is compiled by CI but is unsigned
+            because signing keys are intentionally not stored in the repository.

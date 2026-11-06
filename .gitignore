@@ -25,3 +25,16 @@ credentials.json
 # 编辑器
 .vscode/
 .idea/
+
+# Android 本地配置
+local.properties
+.gradle/
+.gradle-home/
+*.apk
+*.aab
+*.jks
+*.keystore
+.android-home/
+
+# 本地静态分析工具
+.tools/
