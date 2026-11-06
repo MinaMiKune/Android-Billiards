@@ -1,0 +1,9 @@
+BALL_BALL steps_to_contact=23 cue_speed_before=1.9011 cue_after=(0.0474,0.0000) object_after=(1.8492,0.0000) p_before=0.32318 p_after=0.32242 overlap=0.000000
+CUSHION normal_in=1.0635 normal_out=0.7867 restitution=0.7397 speed_after_one_sec=0.7867
+ROLLING slip_time=0.3958 slip_distance=1.0175 settle_time=4.133 asleep=true
+SPIN @0.8s top_x=0.8971 draw_x=0.4977 neutral_x=0.6728 delta=0.3993 q_norm=1.000000
+SIDE_SPIN omega_z=-69.991 (rad/s) omega_mag=69.991
+DETERMINISM steps=2400 max_position_delta=0.000000000000
+BREAK steps=2417 sim_seconds=5.035 ball_hits=27 cushion_hits=11 pocketed=0 max_speed=7.996 still_moving=false
+BREAK_FULLPOWER steps=2207 sim_seconds=4.598 ball_hits=29 cushion_hits=13 pocketed=2 max_speed=0.000 still_moving=false
+PERF 4800_steps_ms=45.41 us_per_step=9.46 realtime_ratio=220.2x
