@@ -378,6 +378,10 @@ class PhysicsWorld {
                     n = delta / dist
                 }
                 val overlap = minDist - dist
+                // The rack grid can leave touching pairs a few ULPs inside 2r.
+                // Treating that as contact would wake both balls every step and
+                // starve the sleep timer, so the table would never settle.
+                if (overlap <= 1e-9) continue
                 a.position -= n * (overlap * 0.5)
                 b.position += n * (overlap * 0.5)
                 a.wake()
