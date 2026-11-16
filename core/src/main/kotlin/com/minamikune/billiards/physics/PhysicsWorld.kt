@@ -90,9 +90,14 @@ class PhysicsWorld {
 
     fun hasUnsettledMotion(): Boolean {
         for (ball in balls) {
-            if (!ball.active) continue
-            if (ball.velocity.length() > TableSpec.STOP_SPEED) return true
-            if (ball.angularVelocity.length() > TableSpec.STOP_ANGULAR_SPEED) return true
+            if (!ball.ballActive) continue
+            val vx = ball.vx
+            val vy = ball.vy
+            if (sqrt(vx * vx + vy * vy) > TableSpec.STOP_SPEED) return true
+            val wx = ball.wx
+            val wy = ball.wy
+            val wz = ball.wz
+            if (sqrt(wx * wx + wy * wy + wz * wz) > TableSpec.STOP_ANGULAR_SPEED) return true
         }
         return false
     }
@@ -192,12 +197,13 @@ class PhysicsWorld {
 
     private fun integrate(dt: Double) {
         for (ball in balls) {
-            if (!ball.active || ball.asleep) continue
-            ball.previousPosition = ball.position
+            if (!ball.ballActive || ball.ballAsleep) continue
+            ball.prevX = ball.px
+            ball.prevY = ball.py
             integrateBall(ball, dt)
             collideCushions(ball)
             collideJaws(ball)
-            if (!ball.position.isFinite() || !ball.velocity.isFinite()) {
+            if (!(ball.px.isFinite() && ball.py.isFinite() && ball.vx.isFinite() && ball.vy.isFinite())) {
                 // A numerical failure must never poison the table silently.
                 ball.position = Rack.cuePosition()
                 ball.velocity = Vec2.ZERO
@@ -210,8 +216,8 @@ class PhysicsWorld {
         repeat(2) { resolveBallCollisions() }
 
         for (ball in balls) {
-            if (ball.active) checkPocket(ball)
-            if (ball.active) updateSleep(ball, dt)
+            if (ball.ballActive) checkPocket(ball)
+            if (ball.ballActive) updateSleep(ball, dt)
         }
 
         if (!isMoving() && !settledNotified) {
@@ -220,152 +226,224 @@ class PhysicsWorld {
         }
     }
 
+    /**
+     * Scalar hot path: the previous vector-form implementation is expanded here
+     * into primitive Double math with the exact same operation order, so results
+     * are bit-identical while a 480 Hz step allocates no temporary vectors.
+     */
     private fun integrateBall(ball: Ball, dt: Double) {
         val radius = ball.radius
-        val contact = ball.contactVelocity()
-        val slip = contact.length()
+        var vx = ball.vx
+        var vy = ball.vy
+        var wx = ball.wx
+        var wy = ball.wy
+        var wz = ball.wz
+
+        val cx = vx - radius * wy
+        val cy = vy + radius * wx
+        val slip = sqrt(cx * cx + cy * cy)
         if (slip > 0.012) {
-            val frictionDirection = contact.normalized() * -1.0
-            val linearAccel = frictionDirection * (TableSpec.SLIDING_FRICTION * TableSpec.GRAVITY)
-            ball.velocity += linearAccel * dt
+            val mu = TableSpec.SLIDING_FRICTION * TableSpec.GRAVITY
+            val ax = -cx / slip * mu
+            val ay = -cy / slip * mu
+            vx += ax * dt
+            vy += ay * dt
             // alpha = (5 / 2R) * (a_y, -a_x, 0)
             val factor = 5.0 / (2.0 * radius)
-            ball.angularVelocity += Vec3(
-                x = linearAccel.y * factor,
-                y = -linearAccel.x * factor,
-                z = 0.0,
-            ) * dt
-            ball.angularVelocity = Vec3(
-                ball.angularVelocity.x,
-                ball.angularVelocity.y,
-                ball.angularVelocity.z * exp(-TableSpec.SPIN_DECAY_SLIDING * dt),
-            )
+            wx += ay * factor * dt
+            wy += -ax * factor * dt
+            wz *= exp(-TableSpec.SPIN_DECAY_SLIDING * dt)
         } else {
             // Pure rolling. Re-project the angular velocity so that the contact point is
             // stationary, then apply rolling resistance.
-            val speed = ball.velocity.length()
+            val speed = sqrt(vx * vx + vy * vy)
             if (speed > 1e-9) {
                 val decel = TableSpec.ROLLING_FRICTION * TableSpec.GRAVITY * dt
                 val newSpeed = max(0.0, speed - decel)
-                ball.velocity = ball.velocity * (newSpeed / speed)
+                val k = newSpeed / speed
+                vx *= k
+                vy *= k
             }
-            ball.angularVelocity = Vec3(
-                x = -ball.velocity.y / radius,
-                y = ball.velocity.x / radius,
-                z = ball.angularVelocity.z * exp(-TableSpec.SPIN_DECAY_ROLLING * dt),
-            )
+            wx = -vy / radius
+            wy = vx / radius
+            wz *= exp(-TableSpec.SPIN_DECAY_ROLLING * dt)
         }
 
-        val speed = ball.velocity.length()
-        if (speed > TableSpec.MAX_SPEED) ball.velocity = ball.velocity * (TableSpec.MAX_SPEED / speed)
-        val angular = ball.angularVelocity.length()
+        val speed = sqrt(vx * vx + vy * vy)
+        if (speed > TableSpec.MAX_SPEED) {
+            val k = TableSpec.MAX_SPEED / speed
+            vx *= k
+            vy *= k
+        }
+        val angular = sqrt(wx * wx + wy * wy + wz * wz)
         if (angular > TableSpec.MAX_ANGULAR_SPEED) {
-            ball.angularVelocity = ball.angularVelocity * (TableSpec.MAX_ANGULAR_SPEED / angular)
+            val k = TableSpec.MAX_ANGULAR_SPEED / angular
+            wx *= k
+            wy *= k
+            wz *= k
         }
 
-        ball.position += ball.velocity * dt
-        ball.orientation = ball.orientation.integrate(ball.angularVelocity, dt)
+        ball.px += vx * dt
+        ball.py += vy * dt
+        ball.vx = vx
+        ball.vy = vy
+        ball.wx = wx
+        ball.wy = wy
+        ball.wz = wz
+        integrateOrientation(ball, wx, wy, wz, dt)
+    }
+
+    /** Scalar form of `Quat.integrate` (dq/dt = 0.5 * omega * q), same operation order. */
+    private fun integrateOrientation(ball: Ball, wx: Double, wy: Double, wz: Double, dt: Double) {
+        val qw = ball.qw
+        val qx = ball.qx
+        val qy = ball.qy
+        val qz = ball.qz
+        val halfDt = 0.5 * dt
+        val dw = -(wx * qx + wy * qy + wz * qz)
+        val dx = wx * qw + wy * qz - wz * qy
+        val dy = -wx * qz + wy * qw + wz * qx
+        val dz = wx * qy - wy * qx + wz * qw
+        var nw = qw + dw * halfDt
+        var nx = qx + dx * halfDt
+        var ny = qy + dy * halfDt
+        var nz = qz + dz * halfDt
+        val n = sqrt(nw * nw + nx * nx + ny * ny + nz * nz)
+        if (n < 1e-12) {
+            nw = 1.0
+            nx = 0.0
+            ny = 0.0
+            nz = 0.0
+        } else {
+            nw /= n
+            nx /= n
+            ny /= n
+            nz /= n
+        }
+        ball.qw = nw
+        ball.qx = nx
+        ball.qy = ny
+        ball.qz = nz
     }
 
     private fun collideCushions(ball: Ball) {
-        val p = ball.position
         val r = ball.radius
-        val halfW = TableSpec.HALF_LENGTH
-        val halfH = TableSpec.HALF_WIDTH
-        val limitX = halfW - r
-        val limitY = halfH - r
+        val limitX = TableSpec.HALF_LENGTH - r
+        val limitY = TableSpec.HALF_WIDTH - r
+        val px = ball.px
+        val py = ball.py
 
-        if (p.y > limitY && !TableSpec.isCushionGapX(p.x)) {
-            val penetration = p.y - limitY
-            ball.position = Vec2(p.x, limitY)
-            if (ball.velocity.y > 0.0) {
-                resolveCushion(ball, Vec2(0.0, 1.0), Vec2(0.0, r), ball.velocity.y)
+        if (py > limitY && !TableSpec.isCushionGapX(px)) {
+            val penetration = py - limitY
+            ball.py = limitY
+            if (ball.vy > 0.0) {
+                resolveCushion(ball, 0.0, 1.0, 0.0, r, ball.vy)
             }
-            if (penetration > 0.02) ball.velocity = Vec2(ball.velocity.x * 0.92, ball.velocity.y)
-        } else if (p.y < -limitY && !TableSpec.isCushionGapX(p.x)) {
-            ball.position = Vec2(p.x, -limitY)
-            if (ball.velocity.y < 0.0) {
-                resolveCushion(ball, Vec2(0.0, -1.0), Vec2(0.0, -r), -ball.velocity.y)
+            if (penetration > 0.02) ball.vx *= 0.92
+        } else if (py < -limitY && !TableSpec.isCushionGapX(px)) {
+            ball.py = -limitY
+            if (ball.vy < 0.0) {
+                resolveCushion(ball, 0.0, -1.0, 0.0, -r, -ball.vy)
             }
         }
 
-        val p2 = ball.position
-        if (p2.x > limitX && !TableSpec.isCushionGapY(p2.y)) {
-            ball.position = Vec2(limitX, p2.y)
-            if (ball.velocity.x > 0.0) {
-                resolveCushion(ball, Vec2(1.0, 0.0), Vec2(r, 0.0), ball.velocity.x)
+        val p2x = ball.px
+        val p2y = ball.py
+        if (p2x > limitX && !TableSpec.isCushionGapY(p2y)) {
+            ball.px = limitX
+            if (ball.vx > 0.0) {
+                resolveCushion(ball, 1.0, 0.0, r, 0.0, ball.vx)
             }
-        } else if (p2.x < -limitX && !TableSpec.isCushionGapY(p2.y)) {
-            ball.position = Vec2(-limitX, p2.y)
-            if (ball.velocity.x < 0.0) {
-                resolveCushion(ball, Vec2(-1.0, 0.0), Vec2(-r, 0.0), -ball.velocity.x)
+        } else if (p2x < -limitX && !TableSpec.isCushionGapY(p2y)) {
+            ball.px = -limitX
+            if (ball.vx < 0.0) {
+                resolveCushion(ball, -1.0, 0.0, -r, 0.0, -ball.vx)
             }
         }
     }
 
-    private fun resolveCushion(ball: Ball, outward: Vec2, contact: Vec2, normalSpeed: Double) {
+    /**
+     * Scalar form of the cushion impulse. [ox]/[oy] is the outward normal,
+     * [cx]/[cy] the contact offset from the ball centre. The 3D cross products
+     * of the vector form reduce to z-axis terms here; spin about x/y passes
+     * through the tangential friction as impulse z, which is preserved.
+     */
+    private fun resolveCushion(ball: Ball, ox: Double, oy: Double, cx: Double, cy: Double, normalSpeed: Double) {
         if (normalSpeed <= 0.0) return
-        val normal3 = Vec3(outward.x, outward.y, 0.0)
-        val contact3 = Vec3(contact.x, contact.y, 0.0)
-        val surfaceVelocity = Vec3(
-            ball.velocity.x - ball.angularVelocity.z * contact.y,
-            ball.velocity.y + ball.angularVelocity.z * contact.x,
-            0.0,
-        )
+        val vx = ball.vx
+        val vy = ball.vy
+        val wz = ball.wz
+        val svx = vx - wz * cy
+        val svy = vy + wz * cx
+        val svDotN = svx * ox + svy * oy
+        val tx = svx - ox * svDotN
+        val ty = svy - oy * svDotN
+        val tangentialAmount = sqrt(tx * tx + ty * ty)
         // Normal impulse: Jn = m (1 + e) vn, applied inward.
         val normalImpulse = (1.0 + TableSpec.CUSHION_RESTITUTION) * normalSpeed * ball.mass
-        val tangential = surfaceVelocity - normal3 * surfaceVelocity.dot(normal3)
-        val tangentialAmount = tangential.length()
-        val frictionImpulse = if (tangentialAmount > 1e-9) {
-            min(TableSpec.CUSHION_FRICTION * normalImpulse, tangentialAmount * ball.mass * 0.5)
-        } else 0.0
-
-        var impulse = normal3 * -normalImpulse
-        if (frictionImpulse > 0.0) {
-            impulse += (tangential * (-frictionImpulse / tangentialAmount))
+        var frictionImpulse = 0.0
+        if (tangentialAmount > 1e-9) {
+            frictionImpulse = min(TableSpec.CUSHION_FRICTION * normalImpulse, tangentialAmount * ball.mass * 0.5)
         }
-        ball.velocity += Vec2(impulse.x, impulse.y) * (1.0 / ball.mass)
-        val torque = contact3.cross(impulse)
-        ball.angularVelocity += torque * (1.0 / ball.inertia)
-        // Resting on the rail damps vertical spin.
-        ball.angularVelocity = Vec3(
-            ball.angularVelocity.x,
-            ball.angularVelocity.y,
-            ball.angularVelocity.z * 0.82,
-        )
+
+        var ix = ox * -normalImpulse
+        var iy = oy * -normalImpulse
+        if (frictionImpulse > 0.0) {
+            ix += tx * (-frictionImpulse / tangentialAmount)
+            iy += ty * (-frictionImpulse / tangentialAmount)
+        }
+        val invMass = 1.0 / ball.mass
+        ball.vx = vx + ix * invMass
+        ball.vy = vy + iy * invMass
+        // torque = contact x impulse; x/y terms vanish only for the zero z-spin
+        // case, so only the z term is applied here (matches the vector form).
+        val invInertia = 1.0 / ball.inertia
+        ball.wz = (ball.wz + (cx * iy - cy * ix) * invInertia) * 0.82
         ball.wake()
         events.add(
             PhysicsEvent.CushionHit(
                 ballId = ball.id,
                 impactSpeed = normalSpeed,
-                position = ball.position,
+                position = Vec2(ball.px, ball.py),
             ),
         )
     }
 
     private fun collideJaws(ball: Ball) {
+        val minDistance = ball.radius + TableSpec.JAW_RADIUS
+        val minDist2 = minDistance * minDistance
         for (jaw in TableSpec.jaws) {
-            val delta = ball.position - jaw
-            val minDistance = ball.radius + TableSpec.JAW_RADIUS
-            val dist2 = delta.lengthSquared()
-            if (dist2 >= minDistance * minDistance || dist2 < 1e-12) continue
+            val jx = jaw.x
+            val jy = jaw.y
+            val dx = ball.px - jx
+            val dy = ball.py - jy
+            val dist2 = dx * dx + dy * dy
+            if (dist2 >= minDist2 || dist2 < 1e-12) continue
             val dist = sqrt(dist2)
-            val normal = delta / dist
-            ball.position = jaw + normal * minDistance
-            val speedInto = -(ball.velocity.dot(normal))
+            val nx = dx / dist
+            val ny = dy / dist
+            ball.px = jx + nx * minDistance
+            ball.py = jy + ny * minDistance
+            val vx = ball.vx
+            val vy = ball.vy
+            val speedInto = -(vx * nx + vy * ny)
             if (speedInto > 0.0) {
-                val impulse = Vec3(normal.x, normal.y, 0.0) *
-                    ((1.0 + TableSpec.JAW_RESTITUTION) * speedInto * ball.mass)
-                ball.velocity += Vec2(impulse.x, impulse.y) * (1.0 / ball.mass)
-                // The jaw is a static rounded post; spin contributes a little sideways kick.
-                val contact = Vec3(normal.x * ball.radius, normal.y * ball.radius, 0.0)
-                ball.angularVelocity += contact.cross(impulse) * (1.0 / ball.inertia)
+                val jn = (1.0 + TableSpec.JAW_RESTITUTION) * speedInto * ball.mass
+                val ix = nx * jn
+                val iy = ny * jn
+                val invMass = 1.0 / ball.mass
+                ball.vx = vx + ix * invMass
+                ball.vy = vy + iy * invMass
+                // The jaw is a static rounded post; the contact offset x impulse
+                // torque is z-only, giving a little sideways kick from spin.
+                val invInertia = 1.0 / ball.inertia
+                ball.wz += (nx * ball.radius * iy - ny * ball.radius * ix) * invInertia
                 if (speedInto > 0.05) {
                     events.add(
                         PhysicsEvent.CushionHit(
                             ballId = ball.id,
                             impactSpeed = speedInto,
-                            position = ball.position,
+                            position = Vec2(ball.px, ball.py),
                         ),
                     )
                 }
@@ -374,49 +452,76 @@ class PhysicsWorld {
         }
     }
 
+    /**
+     * Scalar pairwise impulse solver. The vector form's 3D cross products reduce
+     * to the z torque shown here, except for friction in the presence of x/y
+     * spin: the tangential relative velocity then has a z component, so the
+     * friction impulse's z term feeds back into wx/wy and must be kept.
+     */
     private fun resolveBallCollisions() {
         for (i in balls.indices) {
             val a = balls[i]
-            if (!a.active) continue
+            if (!a.ballActive) continue
             for (j in i + 1 until balls.size) {
                 val b = balls[j]
-                if (!b.active) continue
-                val delta = b.position - a.position
+                if (!b.ballActive) continue
+                val dx = b.px - a.px
+                val dy = b.py - a.py
                 val minDist = a.radius + b.radius
-                val dist2 = delta.lengthSquared()
+                val dist2 = dx * dx + dy * dy
                 if (dist2 >= minDist * minDist) continue
-                var n = Vec2.ZERO
+                var nx = 1.0
+                var ny = 0.0
                 var dist = 0.0
-                if (dist2 < 1e-14) {
-                    n = Vec2(1.0, 0.0)
-                } else {
+                if (dist2 >= 1e-14) {
                     dist = sqrt(dist2)
-                    n = delta / dist
+                    nx = dx / dist
+                    ny = dy / dist
                 }
                 val overlap = minDist - dist
                 // The rack grid can leave touching pairs a few ULPs inside 2r.
                 // Treating that as contact would wake both balls every step and
                 // starve the sleep timer, so the table would never settle.
                 if (overlap <= 1e-9) continue
-                a.position -= n * (overlap * 0.5)
-                b.position += n * (overlap * 0.5)
+                val half = overlap * 0.5
+                a.px -= nx * half
+                a.py -= ny * half
+                b.px += nx * half
+                b.py += ny * half
                 a.wake()
                 b.wake()
 
-                val contactA = Vec3(n.x * a.radius, n.y * a.radius, 0.0)
-                val contactB = Vec3(-n.x * b.radius, -n.y * b.radius, 0.0)
-                val velA = Vec3(a.velocity.x, a.velocity.y, 0.0) + a.angularVelocity.cross(contactA)
-                val velB = Vec3(b.velocity.x, b.velocity.y, 0.0) + b.angularVelocity.cross(contactB)
-                val relative = velA - velB
-                val normalVelocity = relative.dot(Vec3(n.x, n.y, 0.0))
+                val rax = nx * a.radius
+                val ray = ny * a.radius
+                val rbx = -nx * b.radius
+                val rby = -ny * b.radius
+                val vax = a.vx
+                val vay = a.vy
+                val vbx = b.vx
+                val vby = b.vy
+                val wax = a.wx
+                val way = a.wy
+                val waz = a.wz
+                val wbx = b.wx
+                val wby = b.wy
+                val wbz = b.wz
+                // vel = v + w x r, expanded component-wise.
+                val relx = (vax - waz * ray) - (vbx - wbz * rby)
+                val rely = (vay + waz * rax) - (vby + wbz * rbx)
+                val relz = (wax * ray - way * rax) - (wbx * rby - wby * rbx)
+                val normalVelocity = relx * nx + rely * ny
                 if (normalVelocity <= 0.0) continue
 
                 val normalImpulse = (1.0 + TableSpec.BALL_RESTITUTION) * normalVelocity /
                     (a.inverseMass + b.inverseMass)
-                var impulse = Vec3(n.x, n.y, 0.0) * -normalImpulse
+                var ix = nx * -normalImpulse
+                var iy = ny * -normalImpulse
 
-                val tangentVelocity = relative - Vec3(n.x, n.y, 0.0) * normalVelocity
-                val tangentSpeed = tangentVelocity.length()
+                val tx = relx - nx * normalVelocity
+                val ty = rely - ny * normalVelocity
+                val tz = relz
+                val tangentSpeed = sqrt(tx * tx + ty * ty + tz * tz)
+                var iz = 0.0
                 if (tangentSpeed > 1e-9) {
                     val effectiveMass = 1.0 / (
                         a.inverseMass + b.inverseMass +
@@ -424,13 +529,27 @@ class PhysicsWorld {
                         )
                     val frictionLimit = TableSpec.BALL_FRICTION * normalImpulse
                     val friction = min(frictionLimit, tangentSpeed * effectiveMass)
-                    impulse += tangentVelocity.normalized() * -friction
+                    ix += tx / tangentSpeed * -friction
+                    iy += ty / tangentSpeed * -friction
+                    iz += tz / tangentSpeed * -friction
                 }
 
-                a.velocity += Vec2(impulse.x, impulse.y) * a.inverseMass
-                b.velocity -= Vec2(impulse.x, impulse.y) * b.inverseMass
-                a.angularVelocity += contactA.cross(impulse) * (1.0 / a.inertia)
-                b.angularVelocity += contactB.cross(impulse * -1.0) * (1.0 / b.inertia)
+                val invMa = a.inverseMass
+                val invMb = b.inverseMass
+                a.vx = vax + ix * invMa
+                a.vy = vay + iy * invMa
+                b.vx = vbx - ix * invMb
+                b.vy = vby - iy * invMb
+                // contactA x impulse / contactB x (-impulse): x/y terms come only
+                // from the impulse z component (spin carry from friction).
+                val invIa = 1.0 / a.inertia
+                val invIb = 1.0 / b.inertia
+                a.wx = wax + ray * iz * invIa
+                a.wy = way - rax * iz * invIa
+                a.wz = waz + (rax * iy - ray * ix) * invIa
+                b.wx = wbx - rby * iz * invIb
+                b.wy = wby + rbx * iz * invIb
+                b.wz = wbz + (rby * ix - rbx * iy) * invIb
 
                 if (normalVelocity > 0.03) {
                     events.add(
@@ -438,7 +557,7 @@ class PhysicsWorld {
                             firstBallId = a.id,
                             secondBallId = b.id,
                             impactSpeed = normalVelocity,
-                            position = (a.position + b.position) * 0.5,
+                            position = Vec2((a.px + b.px) * 0.5, (a.py + b.py) * 0.5),
                         ),
                     )
                 }
@@ -447,21 +566,41 @@ class PhysicsWorld {
     }
 
     private fun checkPocket(ball: Ball) {
+        // Scalar form of segmentCircleHit(previousPosition, position, centre, radius).
+        val p0x = ball.prevX
+        val p0y = ball.prevY
+        val p1x = ball.px
+        val p1y = ball.py
+        val dx = p1x - p0x
+        val dy = p1y - p0y
+        val len2 = dx * dx + dy * dy
         for (pocket in TableSpec.pockets) {
-            if (segmentCircleHit(
-                    ball.previousPosition,
-                    ball.position,
-                    pocket.center,
-                    pocket.captureRadius,
-                )
-            ) {
-                ball.active = false
-                ball.asleep = true
-                ball.pocketIndex = pocket.index
-                val resting = ball.position
-                ball.position = pocket.center
-                ball.velocity = Vec2.ZERO
-                ball.angularVelocity = Vec3.ZERO
+            val pcx = pocket.center.x
+            val pcy = pocket.center.y
+            val hit = if (len2 < 1e-12) {
+                val ex = p0x - pcx
+                val ey = p0y - pcy
+                sqrt(ex * ex + ey * ey) <= pocket.captureRadius
+            } else {
+                val t = (((pcx - p0x) * dx + (pcy - p0y) * dy) / len2).coerceIn(0.0, 1.0)
+                val cx = p0x + dx * t
+                val cy = p0y + dy * t
+                val ex = cx - pcx
+                val ey = cy - pcy
+                sqrt(ex * ex + ey * ey) <= pocket.captureRadius
+            }
+            if (hit) {
+                ball.ballActive = false
+                ball.ballAsleep = true
+                ball.ballPocketIndex = pocket.index
+                val resting = Vec2(ball.px, ball.py)
+                ball.px = pcx
+                ball.py = pcy
+                ball.vx = 0.0
+                ball.vy = 0.0
+                ball.wx = 0.0
+                ball.wy = 0.0
+                ball.wz = 0.0
                 events.add(
                     PhysicsEvent.Pocketed(
                         ballId = ball.id,
@@ -476,17 +615,26 @@ class PhysicsWorld {
         // Safety net: a ball that squeezes through a mouth without being captured is
         // returned to the nearest legal spot instead of escaping the table forever.
         val escape = 0.06
-        if (abs(ball.position.x) > TableSpec.HALF_LENGTH + escape ||
-            abs(ball.position.y) > TableSpec.HALF_WIDTH + escape
+        if (abs(ball.px) > TableSpec.HALF_LENGTH + escape ||
+            abs(ball.py) > TableSpec.HALF_WIDTH + escape
         ) {
-            val pocket = TableSpec.pockets.minByOrNull { it.center.distanceTo(ball.position) }
+            val px = ball.px
+            val py = ball.py
+            val pocket = TableSpec.pockets.minByOrNull {
+                val ex = it.center.x - px
+                val ey = it.center.y - py
+                sqrt(ex * ex + ey * ey)
+            }
             if (pocket != null) {
-                ball.active = false
-                ball.asleep = true
-                ball.pocketIndex = pocket.index
-                ball.velocity = Vec2.ZERO
-                ball.angularVelocity = Vec3.ZERO
-                events.add(PhysicsEvent.Pocketed(ball.id, pocket.index, ball.position))
+                ball.ballActive = false
+                ball.ballAsleep = true
+                ball.ballPocketIndex = pocket.index
+                ball.vx = 0.0
+                ball.vy = 0.0
+                ball.wx = 0.0
+                ball.wy = 0.0
+                ball.wz = 0.0
+                events.add(PhysicsEvent.Pocketed(ball.id, pocket.index, Vec2(px, py)))
             } else {
                 ball.position = Rack.cuePosition()
                 ball.velocity = Vec2.ZERO
@@ -495,18 +643,26 @@ class PhysicsWorld {
     }
 
     private fun updateSleep(ball: Ball, dt: Double) {
-        if (ball.velocity.length() <= TableSpec.STOP_SPEED &&
-            ball.angularVelocity.length() <= TableSpec.STOP_ANGULAR_SPEED
+        val vx = ball.vx
+        val vy = ball.vy
+        val wx = ball.wx
+        val wy = ball.wy
+        val wz = ball.wz
+        if (sqrt(vx * vx + vy * vy) <= TableSpec.STOP_SPEED &&
+            sqrt(wx * wx + wy * wy + wz * wz) <= TableSpec.STOP_ANGULAR_SPEED
         ) {
             ball.lowMotionTime += dt
             if (ball.lowMotionTime >= TableSpec.STOP_TIME) {
-                ball.velocity = Vec2.ZERO
-                ball.angularVelocity = Vec3.ZERO
-                ball.asleep = true
+                ball.vx = 0.0
+                ball.vy = 0.0
+                ball.wx = 0.0
+                ball.wy = 0.0
+                ball.wz = 0.0
+                ball.ballAsleep = true
             }
         } else {
             ball.lowMotionTime = 0.0
-            ball.asleep = false
+            ball.ballAsleep = false
         }
     }
 

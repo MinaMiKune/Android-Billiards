@@ -96,6 +96,20 @@ class TableRenderer(
     private var whiteTexture = 0
     private var ready = false
 
+    /** Monotonic frame counter; the GL smoke test asserts this advances. */
+    @Volatile var framesRendered = 0L
+        private set
+
+    /** GL errors drained at frame boundaries; the smoke gate requires zero. */
+    @Volatile var glErrorCount = 0
+        private set
+
+    @Volatile var lastGlError = GLES30.GL_NO_ERROR
+        private set
+
+    /** Set by [trimResources]; the next frame recreates GPU resources lazily. */
+    @Volatile private var trimmed = false
+
     private val ballRender = List(16) { BallRender() }
     private val fall = FloatArray(16)
     private val wasActive = BooleanArray(16) { true }
@@ -123,11 +137,19 @@ class TableRenderer(
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         // A new EGL context invalidates cached program/uniform ids from the old one.
-        ready = false
         uniforms.clear()
         // Program/mesh/texture ids from the previous EGL context are dead. Drop them
         // without deleting (the driver already owns/destroyed them).
         pool.beginContext()
+        createResources()
+    }
+
+    /**
+     * Builds every GL object for the current context. Called from
+     * [onSurfaceCreated] and, after a [trimResources], lazily from the next
+     * [onDrawFrame] so a trimmed surface never stays black.
+     */
+    private fun createResources() {
         GLES30.glClearColor(0.020f, 0.024f, 0.028f, 1f)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthFunc(GLES30.GL_LEQUAL)
@@ -184,6 +206,23 @@ class TableRenderer(
         onContextReady?.ready()
     }
 
+    /**
+     * Releases all GPU objects while the EGL context is still alive. Runs on the
+     * GL thread (via `GLSurfaceView.queueEvent`) in response to a system memory
+     * trim; the next frame recreates everything through [createResources], so
+     * returning from a trimmed background never shows a dead surface (stage 7,
+     * risk R22).
+     */
+    fun trimResources() {
+        if (!ready) return
+        pool.release()
+        lineVao = 0
+        lineVbo = 0
+        uniforms.clear()
+        ready = false
+        trimmed = true
+    }
+
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         surfaceW = max(1, width)
         surfaceH = max(1, height)
@@ -236,7 +275,14 @@ class TableRenderer(
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        if (!ready) return
+        if (!ready) {
+            if (!trimmed) return
+            // Trimmed while the context survived: rebuild on the GL thread and
+            // draw normally below instead of presenting a black surface.
+            trimmed = false
+            createResources()
+        }
+        framesRendered++
         val now = System.nanoTime()
         val dt = if (lastNanos == 0L) 0f else min(0.05f, (now - lastNanos) / 1_000_000_000f)
         lastNanos = now
@@ -276,7 +322,14 @@ class TableRenderer(
             GLES30.glDisable(GLES30.GL_SCISSOR_TEST)
             GLES30.glViewport(0, 0, surfaceW, surfaceH)
         }
-        GlUtil.checkError("frame")
+        // Drain GL errors once per frame and surface them to the smoke gate.
+        var err = GLES30.glGetError()
+        while (err != GLES30.GL_NO_ERROR) {
+            glErrorCount++
+            lastGlError = err
+            android.util.Log.e(TAG, "GL error 0x${Integer.toHexString(err)} after frame $framesRendered")
+            err = GLES30.glGetError()
+        }
     }
 
     private fun copyState(dt: Float) {
@@ -756,6 +809,8 @@ class TableRenderer(
     }
 
     companion object {
+        private const val TAG = "TableRenderer"
+
         private const val BALL_VERT = """
 #version 300 es
 layout(location=0) in vec3 aPos;

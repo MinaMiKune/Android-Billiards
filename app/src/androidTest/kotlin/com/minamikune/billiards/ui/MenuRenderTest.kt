@@ -100,6 +100,7 @@ class MenuRenderTest {
         900 to 1600,  // small foldable inner display
         1812 to 2176, // large foldable inner display (tabletop capable)
         1280 to 720,  // desktop freeform window
+        600 to 900,   // smallest freeform window (roadmap §7.2)
     )
 
     private fun draw(view: View, w: Int, h: Int) {

@@ -121,10 +121,67 @@ jobs:
             instrumentation-logcat.txt
           if-no-files-found: warn
 
+  gl-smoke:
+    name: GL smoke and save matrix (API 37 emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+
+      - name: Accept licenses
+        run: yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Make wrapper executable
+        run: chmod +x gradlew
+
+      - name: Run GL smoke and corruption-matrix tests on Android 17
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 37
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 1200
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            set +e
+            ./gradlew :app:connectedDebugAndroidTest \
+              -Pandroid.testInstrumentationRunnerArguments.class=com.minamikune.billiards.gl.GlSmokeTest,com.minamikune.billiards.data.SaveStoreTest \
+              --stacktrace --info
+            code=$?
+            adb logcat -d -v threadtime > gl-smoke-logcat.txt || true
+            exit $code
+
+      - name: Upload GL smoke reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: billiards-gl-smoke-results
+          path: |
+            app/build/reports/androidTests/**
+            app/build/outputs/androidTest-results/**
+            gl-smoke-logcat.txt
+          if-no-files-found: warn
+
   release:
     name: Publish debug APK for tag
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ build, instrumentation ]
+    needs: [ build, instrumentation, gl-smoke ]
     runs-on: ubuntu-latest
     permissions:
       contents: write

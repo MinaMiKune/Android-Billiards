@@ -543,6 +543,23 @@ class MainActivity : Activity() {
         updateKeepScreenOn()
     }
 
+    /**
+     * Memory trim (stage 7, risk R22): release the renderer's GPU objects as soon
+     * as the system signals pressure, while the EGL context is still alive. The
+     * next rendered frame recreates them lazily, so a long background stay never
+     * returns to a dead surface.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            val r = renderer
+            val s = surface
+            if (r != null && s != null) {
+                s.queueEvent { r.trimResources() }
+            }
+        }
+    }
+
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         applyImmersive()

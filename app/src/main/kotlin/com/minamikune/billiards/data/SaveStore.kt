@@ -99,19 +99,36 @@ class SaveStore(context: Context) {
         val ballsJson = o.optJSONArray("balls") ?: return null
         if (ballsJson.length() != 16) return null
         val balls = ArrayList<BallState>(16)
+        val seenIds = BooleanArray(16)
         for (i in 0 until ballsJson.length()) {
             val b = ballsJson.getJSONObject(i)
+            val id = b.getInt("id")
+            // A corrupt payload must never alias two entries onto one ball or
+            // invent balls outside the 0..15 set.
+            if (id < 0 || id > 15 || seenIds[id]) return null
+            seenIds[id] = true
             val pos = b.getJSONArray("pos")
             val vel = b.getJSONArray("vel")
             val omega = b.getJSONArray("omega")
             val q = b.getJSONArray("q")
+            // String values like "NaN" coerce to non-finite doubles; those would
+            // poison physics and rendering, so reject the whole payload.
+            val numbers = doubleArrayOf(
+                pos.getDouble(0), pos.getDouble(1),
+                vel.getDouble(0), vel.getDouble(1),
+                omega.getDouble(0), omega.getDouble(1), omega.getDouble(2),
+                q.getDouble(0), q.getDouble(1), q.getDouble(2), q.getDouble(3),
+            )
+            for (value in numbers) {
+                if (!value.isFinite()) return null
+            }
             balls.add(
                 BallState(
-                    id = b.getInt("id"),
-                    position = Vec2(pos.getDouble(0), pos.getDouble(1)),
-                    velocity = Vec2(vel.getDouble(0), vel.getDouble(1)),
-                    angularVelocity = Vec3(omega.getDouble(0), omega.getDouble(1), omega.getDouble(2)),
-                    orientation = Quat(q.getDouble(0), q.getDouble(1), q.getDouble(2), q.getDouble(3)),
+                    id = id,
+                    position = Vec2(numbers[0], numbers[1]),
+                    velocity = Vec2(numbers[2], numbers[3]),
+                    angularVelocity = Vec3(numbers[4], numbers[5], numbers[6]),
+                    orientation = Quat(numbers[7], numbers[8], numbers[9], numbers[10]),
                     active = b.getBoolean("active"),
                     asleep = b.getBoolean("asleep"),
                     pocketIndex = b.getInt("pocket"),
@@ -134,20 +151,28 @@ class SaveStore(context: Context) {
         }
         if (players.isEmpty()) return null
         val aim = o.getJSONArray("aim")
+        val aimX = aim.getDouble(0)
+        val aimY = aim.getDouble(1)
+        if (!aimX.isFinite() || !aimY.isFinite()) return null
+        // Cosmetic scalars default rather than reject when absent or non-finite.
+        val power = o.optDouble("power", 0.55).takeIf { it.isFinite() } ?: 0.55
+        val sideSpin = o.optDouble("side", 0.0).takeIf { it.isFinite() } ?: 0.0
+        val verticalSpin = o.optDouble("vertical", 0.0).takeIf { it.isFinite() } ?: 0.0
+        val current = o.optInt("current", 0).coerceIn(0, players.size - 1)
         return MatchSnapshot(
             mode = mode,
             state = state,
             balls = balls,
-            currentPlayer = o.optInt("current", 0),
+            currentPlayer = current,
             players = players,
             ballInHand = o.optBoolean("inHand"),
             message = o.optString("msg", ""),
             winner = if (o.isNull("winner")) null else o.optInt("winner"),
             shots = o.optInt("shots", 0),
-            aimDirection = Vec2(aim.getDouble(0), aim.getDouble(1)),
-            power = o.optDouble("power", 0.55),
-            sideSpin = o.optDouble("side", 0.0),
-            verticalSpin = o.optDouble("vertical", 0.0),
+            aimDirection = Vec2(aimX, aimY),
+            power = power,
+            sideSpin = sideSpin,
+            verticalSpin = verticalSpin,
             aiThinking = state == SessionState.AI_THINKING,
             lastPocketed = if (o.isNull("lastPocketed")) null else o.optInt("lastPocketed"),
         )

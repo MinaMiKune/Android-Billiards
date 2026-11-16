@@ -217,4 +217,23 @@ class HudLayoutTest {
         assertTrue(l.ffRect.left >= 0f && l.ffRect.right <= 2200f)
         assertTrue(l.powerRect.top >= 0f && l.powerRect.bottom <= 1600f)
     }
+
+    /**
+     * 600×900 freeform window (roadmap §7.2): the tightest class the game must
+     * support. Controls may shrink toward the 38dp floor but never leave the
+     * safe area or overlap each other.
+     */
+    @Test
+    fun smallWindow600x900KeepsControlsUsableAndInsideSafeArea() {
+        val l = computeHudLayout(600, 900, 24, 60, 24, 96, 2.0f)
+        assertTrue(l.powerRect.left >= 24f)
+        assertTrue(l.powerRect.right <= 600f - 24f)
+        assertTrue(l.pauseRect.top >= 60f)
+        assertTrue(l.pauseRect.right <= 600f - 24f)
+        assertTrue(l.shootCenterY + l.shootRadius <= 900f - 96f)
+        assertTrue(l.spinCenterY + l.spinRadius <= 900f - 96f)
+        assertTrue(l.shootRadius >= 38f * 2.0f)
+        assertTrue(l.spinRadius >= 38f * 2.0f)
+        assertTrue(l.spinCenterX + l.spinRadius < l.shootCenterX - l.shootRadius)
+    }
 }

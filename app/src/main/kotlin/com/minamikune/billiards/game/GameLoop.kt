@@ -31,7 +31,6 @@ class GameLoop(
     private var lastNanos = 0L
     private var accumulator = 0.0
     private var snapshotClock = 0.0
-    private var lastPublishedState: SessionState? = null
 
     fun start() {
         if (thread != null) return
@@ -135,20 +134,12 @@ class GameLoop(
                 snapshotClock = 0.0
                 val snap = synchronized(engine) { engine.snapshot() }
                 latest = snap
-                if (snap.state != lastPublishedState || snap.state == SessionState.SIMULATING) {
-                    lastPublishedState = snap.state
-                    try {
-                        onSnapshot(snap)
-                    } catch (_: Throwable) {
-                        Unit
-                    }
-                } else {
-                    // Publish aiming-state UI changes such as power/spin at a lower rate.
-                    try {
-                        onSnapshot(snap)
-                    } catch (_: Throwable) {
-                        Unit
-                    }
+                // The UI consumes power/spin changes even while aiming, so every
+                // snapshot is published; the catch guards a detached listener.
+                try {
+                    onSnapshot(snap)
+                } catch (_: Throwable) {
+                    Unit
                 }
             }
             sleep(2)
@@ -160,7 +151,9 @@ class GameLoop(
             var m = 0.0
             for (b in engine.world.balls) {
                 if (!b.active) continue
-                if (b.velocity.length() > m) m = b.velocity.length()
+                // Ball.speed() reads scalar state without allocating a vector.
+                val s = b.speed()
+                if (s > m) m = s
             }
             return m
         }

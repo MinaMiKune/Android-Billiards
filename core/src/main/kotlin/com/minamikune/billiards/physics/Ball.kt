@@ -16,53 +16,118 @@ class Ball(
     val radius: Double = TableSpec.BALL_RADIUS,
     val mass: Double = TableSpec.BALL_MASS,
 ) {
-    var position: Vec2 = position
-        internal set
-    var velocity: Vec2 = Vec2.ZERO
-        internal set
-    var angularVelocity: Vec3 = Vec3.ZERO
-        internal set
-    var orientation: Quat = INITIAL_ORIENTATION
-        internal set
-    var active: Boolean = true
-        internal set
-    var asleep: Boolean = false
-        internal set
-    var pocketIndex: Int = -1
-        internal set
-
+    /**
+     * Canonical scalar simulation state. The 480 Hz step hot path mutates these
+     * fields directly so a step allocates nothing; the immutable value-type views
+     * below materialise fresh instances on demand for consumers outside the step
+     * (snapshots, AI scans, rendering). Values and operation order are identical
+     * to the previous vector-backed implementation.
+     */
+    internal var px: Double = position.x
+    internal var py: Double = position.y
+    internal var prevX: Double = position.x
+    internal var prevY: Double = position.y
+    internal var vx: Double = 0.0
+    internal var vy: Double = 0.0
+    internal var wx: Double = 0.0
+    internal var wy: Double = 0.0
+    internal var wz: Double = 0.0
+    internal var qw: Double = INITIAL_ORIENTATION.w
+    internal var qx: Double = INITIAL_ORIENTATION.x
+    internal var qy: Double = INITIAL_ORIENTATION.y
+    internal var qz: Double = INITIAL_ORIENTATION.z
+    internal var ballActive: Boolean = true
+    internal var ballAsleep: Boolean = false
+    internal var ballPocketIndex: Int = -1
     internal var lowMotionTime: Double = 0.0
-    internal var previousPosition: Vec2 = position
+
+    var position: Vec2
+        get() = Vec2(px, py)
+        internal set(value) {
+            px = value.x
+            py = value.y
+        }
+    var velocity: Vec2
+        get() = Vec2(vx, vy)
+        internal set(value) {
+            vx = value.x
+            vy = value.y
+        }
+    var angularVelocity: Vec3
+        get() = Vec3(wx, wy, wz)
+        internal set(value) {
+            wx = value.x
+            wy = value.y
+            wz = value.z
+        }
+    var orientation: Quat
+        get() = Quat(qw, qx, qy, qz)
+        internal set(value) {
+            qw = value.w
+            qx = value.x
+            qy = value.y
+            qz = value.z
+        }
+    var active: Boolean
+        get() = ballActive
+        internal set(value) {
+            ballActive = value
+        }
+    var asleep: Boolean
+        get() = ballAsleep
+        internal set(value) {
+            ballAsleep = value
+        }
+    var pocketIndex: Int
+        get() = ballPocketIndex
+        internal set(value) {
+            ballPocketIndex = value
+        }
+
+    internal var previousPosition: Vec2
+        get() = Vec2(prevX, prevY)
+        set(value) {
+            prevX = value.x
+            prevY = value.y
+        }
 
     val inverseMass: Double get() = if (mass > 0.0) 1.0 / mass else 0.0
     val inertia: Double get() = 0.4 * mass * radius * radius
 
-    fun speed(): Double = velocity.length()
-    fun angularSpeed(): Double = angularVelocity.length()
+    fun speed(): Double = sqrt(vx * vx + vy * vy)
+    fun angularSpeed(): Double = sqrt(wx * wx + wy * wy + wz * wz)
     fun kineticEnergy(): Double =
-        0.5 * mass * velocity.lengthSquared() + 0.5 * inertia * angularVelocity.lengthSquared()
+        0.5 * mass * (vx * vx + vy * vy) + 0.5 * inertia * (wx * wx + wy * wy + wz * wz)
 
     /** Contact-point surface velocity relative to the cloth (horizontal components). */
     fun contactVelocity(): Vec2 = Vec2(
-        velocity.x - radius * angularVelocity.y,
-        velocity.y + radius * angularVelocity.x,
+        vx - radius * wy,
+        vy + radius * wx,
     )
 
     internal fun wake() {
-        asleep = false
+        ballAsleep = false
         lowMotionTime = 0.0
     }
 
     internal fun copyFrom(other: Ball) {
-        position = other.position
-        velocity = other.velocity
-        angularVelocity = other.angularVelocity
-        orientation = other.orientation
-        active = other.active
-        asleep = other.asleep
-        pocketIndex = other.pocketIndex
+        px = other.px
+        py = other.py
+        prevX = other.prevX
+        prevY = other.prevY
+        vx = other.vx
+        vy = other.vy
+        wx = other.wx
+        wy = other.wy
+        wz = other.wz
+        qw = other.qw
+        qx = other.qx
+        qy = other.qy
+        qz = other.qz
+        ballActive = other.ballActive
+        ballAsleep = other.ballAsleep
+        ballPocketIndex = other.ballPocketIndex
         lowMotionTime = other.lowMotionTime
-        previousPosition = other.previousPosition
     }
 
     companion object {
