@@ -84,7 +84,7 @@ class TableRenderer(
     private var whiteTexture = 0
     private var ready = false
 
-    private val ballRender = Array(16) { BallRender() }
+    private val ballRender = List(16) { BallRender() }
     private val fall = FloatArray(16)
     private val wasActive = BooleanArray(16) { true }
     private var lastEngine: MatchEngine? = null
@@ -97,14 +97,14 @@ class TableRenderer(
     private var frameCue = Vec2.ZERO
     private var ballInHand = false
 
-    private class BallRender {
-        var x = 0.0
-        var z = 0.0
+    private class BallRender : RenderMath.BallXY {
+        override var x = 0.0
+        override var z = 0.0
         var qx = 0.0
         var qy = 0.0
         var qz = 0.0
         var qw = 1.0
-        var active = true
+        override var active = true
         var pocket = -1
         var visible = true
     }
@@ -181,33 +181,12 @@ class TableRenderer(
             root = if (portrait) Mat4.rotateY((Math.PI / 2.0).toFloat()) else Mat4.identity()
             val aspect = width.toFloat() / height.toFloat()
             proj = Mat4.perspective(36f, aspect, 0.05f, 40f)
-            fitCamera(aspect)
+            val fit = RenderMath.fitCamera(proj, portrait)
+            eye = fit.eye
+            view = fit.view
             viewProj = Mat4.multiply(proj, view)
             invViewProj = Mat4.inverse(viewProj)
         }
-    }
-
-    private fun fitCamera(aspect: Float) {
-        val hx = if (portrait) (TableSpec.HALF_WIDTH + 0.20) else (TableSpec.HALF_LENGTH + 0.20)
-        val hz = if (portrait) (TableSpec.HALF_LENGTH + 0.20) else (TableSpec.HALF_WIDTH + 0.20)
-        val dir = Vec3(0.0, 0.86, 0.51).normalized()
-        var lo = 1.5f
-        var hi = 14f
-        repeat(34) {
-            val mid = (lo + hi) * 0.5f
-            val e = Vec3(dir.x * mid, dir.y * mid, dir.z * mid)
-            val v = Mat4.lookAt(e, Vec3(0.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0))
-            val vp = Mat4.multiply(proj, v)
-            var ok = true
-            for (sx in -1..1 step 2) for (sz in -1..1 step 2) for (y in floatArrayOf(0f, 0.12f)) {
-                val p = Mat4.transformPoint(vp, (sx * hx).toFloat(), y, (sz * hz).toFloat())
-                if (abs(p.x) > 0.90 || abs(p.y) > 0.80) ok = false
-            }
-            if (ok) hi = mid else lo = mid
-        }
-        val d = hi * 1.015f
-        eye = Vec3(dir.x * d, dir.y * d, dir.z * d)
-        view = Mat4.lookAt(eye, Vec3(0.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0))
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -514,41 +493,7 @@ class TableRenderer(
         return true
     }
 
-    private fun aimTarget(): Vec2 {
-        val d = frameAim.normalized()
-        val c = frameCue
-        var best = Double.MAX_VALUE
-        for (i in 1 until 16) {
-            val b = ballRender[i]
-            if (!b.active) continue
-            val ox = b.x - c.x
-            val oz = b.z - c.y
-            val proj = ox * d.x + oz * d.y
-            if (proj <= 0.0) continue
-            val perp2 = ox * ox + oz * oz - proj * proj
-            val rr = (TableSpec.BALL_RADIUS * 2.0) * (TableSpec.BALL_RADIUS * 2.0)
-            if (perp2 > rr) continue
-            val t = proj - sqrt(rr - perp2)
-            if (t > 0.0 && t < best) best = t
-        }
-        val maxX = TableSpec.HALF_LENGTH - TableSpec.BALL_RADIUS
-        val maxZ = TableSpec.HALF_WIDTH - TableSpec.BALL_RADIUS
-        val wall = min(
-            when {
-                d.x > 1e-6 -> (maxX - c.x) / d.x
-                d.x < -1e-6 -> (-maxX - c.x) / d.x
-                else -> Double.MAX_VALUE
-            },
-            when {
-                d.y > 1e-6 -> (maxZ - c.y) / d.y
-                d.y < -1e-6 -> (-maxZ - c.y) / d.y
-                else -> Double.MAX_VALUE
-            },
-        )
-        best = min(best, wall)
-        if (!best.isFinite() || best <= 0.0) return c + d * 1.0
-        return c + d * best
-    }
+    private fun aimTarget(): Vec2 = RenderMath.aimTarget(frameCue, frameAim, ballRender)
 
     private fun drawAimGuide() {
         if (!showAim()) return
@@ -711,25 +656,13 @@ class TableRenderer(
     /** Converts a view-space touch into physical table coordinates, or null if it misses. */
     fun screenToTable(px: Float, py: Float): Vec2? {
         if (surfaceW <= 0 || surfaceH <= 0) return null
-        val x = 2f * px / surfaceW - 1f
-        val y = 1f - 2f * py / surfaceH
         val m: FloatArray
         val isPortrait: Boolean
         synchronized(lock) {
             m = invViewProj.copyOf()
             isPortrait = portrait
         }
-        val near = Mat4.transformPoint(m, x, y, -1f)
-        val far = Mat4.transformPoint(m, x, y, 1f)
-        val dy = far.y - near.y
-        if (abs(dy) < 1e-6) return null
-        val t = -near.y / dy
-        if (t < 0.0 || t > 1.0) return null
-        val wx = near.x + (far.x - near.x) * t
-        val wz = near.z + (far.z - near.z) * t
-        // In portrait the whole table is rotated +90 degrees around Y:
-        // world = (tableY, 0, -tableX), so tableX = -worldZ and tableY = worldX.
-        return TableSpace.worldToTable(wx, wz, isPortrait)
+        return RenderMath.screenToTable(m, surfaceW, surfaceH, isPortrait, px, py)
     }
 
     fun tableToScreen(x: Double, z: Double): Vec2? {
@@ -740,10 +673,7 @@ class TableRenderer(
             m = viewProj.copyOf()
             isPortrait = portrait
         }
-        val world = TableSpace.tableToWorld(x, z, isPortrait)
-        val p = Mat4.transformPoint(m, world.x.toFloat(), 0f, world.y.toFloat())
-        if (p.z < -1.0 || p.z > 1.0) return null
-        return Vec2((p.x + 1.0) * 0.5 * surfaceW, (1.0 - p.y) * 0.5 * surfaceH)
+        return RenderMath.tableToScreen(m, surfaceW, surfaceH, isPortrait, x, z)
     }
 
     companion object {

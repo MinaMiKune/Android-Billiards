@@ -174,10 +174,15 @@ object Meshes {
                 idx.add((b + 1).toShort())
             }
         }
-        return Mesh.build(verts.toFloatArray(), idx.toShortArray())
+        return Pair(verts.toFloatArray(), idx.toShortArray())
     }
 
     fun box(): Mesh {
+        val (vertices, indices) = boxData()
+        return Mesh.build(vertices, indices)
+    }
+
+    internal fun boxData(): Pair<FloatArray, ShortArray> {
         val p = arrayOf(
             floatArrayOf(-0.5f, -0.5f, 0.5f), floatArrayOf(0.5f, -0.5f, 0.5f),
             floatArrayOf(0.5f, 0.5f, 0.5f), floatArrayOf(-0.5f, 0.5f, 0.5f),
@@ -213,10 +218,15 @@ object Meshes {
             idx.add(base.toShort()); idx.add((base + 1).toShort()); idx.add((base + 2).toShort())
             idx.add(base.toShort()); idx.add((base + 2).toShort()); idx.add((base + 3).toShort())
         }
-        return Mesh.build(verts.toFloatArray(), idx.toShortArray())
+        return Pair(verts.toFloatArray(), idx.toShortArray())
     }
 
     fun plane(): Mesh {
+        val (vertices, indices) = planeData()
+        return Mesh.build(vertices, indices)
+    }
+
+    internal fun planeData(): Pair<FloatArray, ShortArray> {
         val verts = floatArrayOf(
             -1f, 0f, -1f, 0f, 1f, 0f, 0f, 0f,
             1f, 0f, -1f, 0f, 1f, 0f, 1f, 0f,
@@ -224,10 +234,15 @@ object Meshes {
             -1f, 0f, 1f, 0f, 1f, 0f, 0f, 1f,
         )
         val idx = shortArrayOf(0, 2, 1, 0, 3, 2)
-        return Mesh.build(verts, idx)
+        return Pair(verts, idx)
     }
 
     fun disc(segments: Int = 48): Mesh {
+        val (vertices, indices) = discData(segments)
+        return Mesh.build(vertices, indices)
+    }
+
+    internal fun discData(segments: Int = 48): Pair<FloatArray, ShortArray> {
         val verts = ArrayList<Float>()
         val idx = ArrayList<Short>()
         verts.addAll(listOf(0f, 0f, 0f, 0f, 1f, 0f, 0.5f, 0.5f))
@@ -242,10 +257,15 @@ object Meshes {
             idx.add(i.toShort())
             idx.add((i + 1).toShort())
         }
-        return Mesh.build(verts.toFloatArray(), idx.toShortArray())
+        return Pair(verts.toFloatArray(), idx.toShortArray())
     }
 
     fun ring(inner: Float = 0.82f, segments: Int = 64): Mesh {
+        val (vertices, indices) = ringData(inner, segments)
+        return Mesh.build(vertices, indices)
+    }
+
+    internal fun ringData(inner: Float = 0.82f, segments: Int = 64): Pair<FloatArray, ShortArray> {
         val verts = ArrayList<Float>()
         val idx = ArrayList<Short>()
         for (i in 0..segments) {
@@ -259,11 +279,16 @@ object Meshes {
             idx.add(a); idx.add((a + 1).toShort()); idx.add((a + 2).toShort())
             idx.add((a + 2).toShort()); idx.add((a + 1).toShort()); idx.add((a + 3).toShort())
         }
-        return Mesh.build(verts.toFloatArray(), idx.toShortArray())
+        return Pair(verts.toFloatArray(), idx.toShortArray())
     }
 
     /** Unit cylinder along -X, from x=0 to x=-1, radius 1. */
     fun cueCylinder(segments: Int = 16): Mesh {
+        val (vertices, indices) = cueCylinderData(segments)
+        return Mesh.build(vertices, indices)
+    }
+
+    internal fun cueCylinderData(segments: Int = 16): Pair<FloatArray, ShortArray> {
         val verts = ArrayList<Float>()
         val idx = ArrayList<Short>()
         for (i in 0..segments) {
@@ -278,16 +303,21 @@ object Meshes {
             idx.add(a); idx.add((a + 1).toShort()); idx.add((a + 2).toShort())
             idx.add((a + 2).toShort()); idx.add((a + 1).toShort()); idx.add((a + 3).toShort())
         }
-        return Mesh.build(verts.toFloatArray(), idx.toShortArray())
+        return Pair(verts.toFloatArray(), idx.toShortArray())
     }
 
     fun quad(): Mesh {
+        val (vertices, indices) = quadData()
+        return Mesh.build(vertices, indices)
+    }
+
+    internal fun quadData(): Pair<FloatArray, ShortArray> {
         val verts = floatArrayOf(
             -1f, 0f, -1f, 0f, 1f, 0f, 0f, 0f,
             1f, 0f, -1f, 0f, 1f, 0f, 1f, 0f,
             1f, 0f, 1f, 0f, 1f, 0f, 1f, 1f,
             -1f, 0f, 1f, 0f, 1f, 0f, 0f, 1f,
         )
-        return Mesh.build(verts, shortArrayOf(0, 2, 1, 0, 3, 2))
+        return Pair(verts, shortArrayOf(0, 2, 1, 0, 3, 2))
     }
 }
