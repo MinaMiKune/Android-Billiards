@@ -26,6 +26,7 @@ import com.minamikune.billiards.game.SessionState
 import com.minamikune.billiards.gl.TableRenderer
 import com.minamikune.billiards.haptics.Haptics
 import com.minamikune.billiards.platform.ActivityResources
+import com.minamikune.billiards.platform.SafeInsets
 import com.minamikune.billiards.physics.PhysicsEvent
 import com.minamikune.billiards.physics.Vec2
 import com.minamikune.billiards.ui.GameHudView
@@ -118,27 +119,32 @@ class MainActivity : Activity() {
         restoreState(savedInstanceState)
 
         root.setOnApplyWindowInsetsListener { _, insets ->
-            val l: Int
-            val t: Int
-            val r: Int
-            val b: Int
-            if (Build.VERSION.SDK_INT >= 30) {
-                val i = insets.getInsets(
-                    WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
-                )
-                l = i.left; t = i.top; r = i.right; b = i.bottom
+            val systemBars: SafeInsets.LTRB = if (Build.VERSION.SDK_INT >= 30) {
+                val i = insets.getInsets(WindowInsets.Type.systemBars())
+                SafeInsets.LTRB(i.left, i.top, i.right, i.bottom)
             } else {
                 @Suppress("DEPRECATION")
-                l = insets.systemWindowInsetLeft
-                @Suppress("DEPRECATION")
-                t = insets.systemWindowInsetTop
-                @Suppress("DEPRECATION")
-                r = insets.systemWindowInsetRight
-                @Suppress("DEPRECATION")
-                b = insets.systemWindowInsetBottom
+                SafeInsets.LTRB(
+                    insets.systemWindowInsetLeft,
+                    insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight,
+                    insets.systemWindowInsetBottom,
+                )
             }
-            hud.setSafeInsets(l, t, r, b)
-            menu.setSafeInsets(l, t, r, b)
+            // Real-device fix: in immersive mode the hidden system bars can
+            // report zero insets (API 28–29 path) while the notch still
+            // occupies the top edge, which pushed the HUD scoreboard under
+            // the cutout. Always merge the cutout's own safe insets in.
+            val cutout = if (Build.VERSION.SDK_INT >= 28) {
+                insets.displayCutout?.let {
+                    SafeInsets.LTRB(it.safeInsetLeft, it.safeInsetTop, it.safeInsetRight, it.safeInsetBottom)
+                }
+            } else {
+                null
+            }
+            val safe = SafeInsets.merge(systemBars, cutout)
+            hud.setSafeInsets(safe.left, safe.top, safe.right, safe.bottom)
+            menu.setSafeInsets(safe.left, safe.top, safe.right, safe.bottom)
             insets
         }
         root.requestApplyInsets()

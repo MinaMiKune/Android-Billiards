@@ -155,6 +155,19 @@ if (Build.VERSION.SDK_INT >= 28) {
 }
 ```
 
+**已修复（2026-11-11，阶段 1 后续）**：真机实测复现——异形屏顶端记分信息被刘海遮挡。
+根因即本节预测：沉浸式隐藏系统栏后刘海侧 inset 为 0，HUD 顶栏按 `safeT=0`
+绘制进了刘海区。修复：
+
+- 新增纯 Kotlin `platform/SafeInsets.kt`（`SafeInsets.merge` 分量取最大值），
+  API 28+ 两个 SDK 分支统一把 `DisplayCutout.safeInset*` 并入安全区；
+- `MainActivity` insets 监听器改用该合并结果喂给 `GameHudView`/`MenuView`；
+- 新增 JVM 单测 `SafeInsetsTest` 4 个（null 刘海直通、沉浸式 0 inset 由刘海补齐、
+  分量取最大、横屏左侧刘海保留）；
+- `:app:testDebugUnitTest` 16/16、`:core:test` 32/32、`lintDebug` 0 error 通过。
+
+待用户同机型复测确认后关闭。
+
 ### 3.2 手势导航
 
 - 透明导航栏 + `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`；从边缘滑动会临时显示系统栏。
@@ -348,6 +361,6 @@ Haptics(context, prefs)
 | 折叠屏 | 基础自适应保留；专项适配按产品决定搁置 |
 | 触觉 | 分层/降级/冷却完整；用户真机实测正常 |
 | 生命周期 | 完整；进程死亡只保证稳定局面 |
-| 关键风险 | 无量化帧率、API 28–29 横屏刘海、预测性返回 manifest、低端机内存 |
+| 关键风险 | 无量化帧率、API 28–29 横屏刘海（代码已修，待同机型复测）、预测性返回 manifest、低端机内存 |
 
 **结论：允许进入阶段 1。真机冒烟与触觉已通过；折叠屏专项按产品决定搁置；剩余硬门禁是“真机性能数据 + 签名发布 + API 37 CI”。在此之前不得宣称“Android 17 性能认证完成”。**
