@@ -791,11 +791,16 @@ class MenuView(
 
     // --------------------------------------------------------------- touches
 
+    // The primary pointer owns the current gesture; secondary fingers are
+    // ignored so a stray second touch cannot start or finish a button press.
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val x = event.x
         val y = event.y
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                activePointerId = event.getPointerId(0)
                 pressedId = null
                 draggingStrength = screen == Screen.SETTINGS && near(strengthBar, x, y, dp(18f))
                 if (draggingStrength) {
@@ -819,14 +824,29 @@ class MenuView(
                 }
                 return true
             }
+            MotionEvent.ACTION_POINTER_DOWN -> return true
             MotionEvent.ACTION_MOVE -> {
+                // Only the owning pointer steers the gesture.
+                if (event.findPointerIndex(activePointerId) == -1) return true
                 if (draggingStrength) {
                     updateStrength(x)
                     invalidate()
                     return true
                 }
             }
+            MotionEvent.ACTION_POINTER_UP -> {
+                // Primary finger lifted: abort the gesture instead of letting a
+                // remaining secondary finger finish the button press on its own.
+                if (event.getPointerId(event.actionIndex) == activePointerId) {
+                    activePointerId = MotionEvent.INVALID_POINTER_ID
+                    pressedId = null
+                    draggingStrength = false
+                    invalidate()
+                }
+                return true
+            }
             MotionEvent.ACTION_UP -> {
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 if (draggingStrength) {
                     draggingStrength = false
                     onSettingsChanged?.invoke()
@@ -852,6 +872,7 @@ class MenuView(
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 pressedId = null
                 draggingStrength = false
                 invalidate()

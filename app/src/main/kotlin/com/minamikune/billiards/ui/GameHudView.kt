@@ -16,14 +16,17 @@ import com.minamikune.billiards.game.SessionState
 import com.minamikune.billiards.physics.BallGroup
 import com.minamikune.billiards.physics.Vec2
 import com.minamikune.billiards.resources.FontSet
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
-/** In-game heads-up display and touch controls, drawn over the GL table. */
+/**
+ * In-game heads-up display and touch controls, drawn over the GL table.
+ *
+ * Touch handling and control layout live in [HudTouchController] /
+ * [computeHudLayout] so the gesture semantics are unit-testable; this View
+ * only maps effects to callbacks and draws.
+ */
 class GameHudView(
     context: Context,
     private val fonts: FontSet = FontSet(),
@@ -65,8 +68,10 @@ class GameHudView(
         textAlign = Paint.Align.CENTER
     }
 
+    // Geometry, kept in android.graphics form for drawing; the canonical
+    // values come from computeHudLayout (shared with the touch controller).
+    private var hudLayout: HudLayout? = null
     private val powerRect = RectF()
-    private val powerTouch = RectF()
     private val pauseRect = RectF()
     private val shootCenter = android.graphics.PointF()
     private val spinCenter = android.graphics.PointF()
@@ -74,22 +79,34 @@ class GameHudView(
     private var shootRadius = 0f
     private val ffRect = RectF()
 
-    private var dragPower = false
-    private var dragSpin = false
-    private var dragAim = false
-    private var pressedPause = false
-    private var pressedShoot = false
-    private var pressedFf = false
     private var localPower = 0.55f
     private var localSide = 0f
     private var localVertical = 0f
-    private var localAimPoint: Vec2? = null
     private var lastFrame = 0L
+
+    private val touchController by lazy {
+        HudTouchController(
+            layout = { hudLayout ?: computeHudLayout(width, height, safeL, safeT, safeR, safeB, d) },
+            context = {
+                snapshot?.let {
+                    HudTouchContext(
+                        state = it.state,
+                        practice = it.mode == GameMode.PRACTICE,
+                        currentPlayer = it.currentPlayer,
+                    )
+                } ?: HudTouchContext(SessionState.AIMING, practice = true, currentPlayer = 0)
+            },
+            powerAnchor = { localPower },
+            aimMapper = { x, y -> screenToTable?.invoke(x, y) },
+        )
+    }
 
     fun setSnapshot(s: MatchSnapshot) {
         snapshot = s
-        if (!dragPower) localPower = s.power.toFloat()
-        if (!dragSpin) {
+        // While a finger owns the power/spin control, an engine snapshot must
+        // not yank the slider or the spin dot from under it.
+        if (!touchController.draggingPower) localPower = s.power.toFloat()
+        if (!touchController.draggingSpin) {
             // Engine spin is stored in [-0.5, 0.5]; the on-screen disc uses [-1, 1].
             localSide = (s.sideSpin * 2.0).toFloat().coerceIn(-1f, 1f)
             localVertical = (s.verticalSpin * 2.0).toFloat().coerceIn(-1f, 1f)
@@ -112,39 +129,15 @@ class GameHudView(
     }
 
     private fun layoutControls(w: Int, h: Int) {
-        val margin = dp(18f)
-        val ph = min(dp(228f), h * 0.42f).coerceAtLeast(dp(150f))
-        val pw = dp(30f)
-        powerRect.set(
-            w - safeR - margin - pw,
-            h * 0.46f - ph / 2f,
-            w - safeR - margin,
-            h * 0.46f + ph / 2f,
-        )
-        powerTouch.set(powerRect)
-        powerTouch.inset(-dp(20f), -dp(8f))
-        pauseRect.set(
-            w - safeR - margin - dp(42f),
-            safeT + dp(14f),
-            w - safeR - margin,
-            safeT + dp(56f),
-        )
-        shootRadius = min(dp(52f), min(w, h) * 0.085f).coerceAtLeast(dp(38f))
-        shootCenter.set(
-            w - safeR - margin - shootRadius,
-            h - safeB - margin - shootRadius,
-        )
-        spinRadius = min(dp(48f), min(w, h) * 0.082f).coerceAtLeast(dp(38f))
-        spinCenter.set(
-            safeL + margin + spinRadius,
-            h - safeB - margin - spinRadius,
-        )
-        ffRect.set(
-            w / 2f - dp(72f),
-            h - safeB - dp(52f),
-            w / 2f + dp(72f),
-            h - safeB - dp(18f),
-        )
+        val l = computeHudLayout(w, h, safeL, safeT, safeR, safeB, d)
+        hudLayout = l
+        powerRect.set(l.powerRect.left, l.powerRect.top, l.powerRect.right, l.powerRect.bottom)
+        pauseRect.set(l.pauseRect.left, l.pauseRect.top, l.pauseRect.right, l.pauseRect.bottom)
+        shootRadius = l.shootRadius
+        shootCenter.set(l.shootCenterX, l.shootCenterY)
+        spinRadius = l.spinRadius
+        spinCenter.set(l.spinCenterX, l.spinCenterY)
+        ffRect.set(l.ffRect.left, l.ffRect.top, l.ffRect.right, l.ffRect.bottom)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -202,7 +195,7 @@ class GameHudView(
 
         // pause button
         paint.style = Paint.Style.FILL
-        paint.color = if (pressedPause) 0x55FFFFFF else 0x33000000
+        paint.color = if (touchController.isPressed(HudPress.PAUSE)) 0x55FFFFFF else 0x33000000
         canvas.drawRoundRect(pauseRect, dp(12f), dp(12f), paint)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = dp(1.2f)
@@ -412,7 +405,7 @@ class GameHudView(
             canvas.drawCircle(cx, cy, shootRadius + dp(8f) + dp(3f) * pulse, paint)
         }
         paint.color = if (enabled) {
-            if (pressedShoot) 0xFFE6C57A.toInt() else 0xFFD7B56D.toInt()
+            if (touchController.isPressed(HudPress.SHOOT)) 0xFFE6C57A.toInt() else 0xFFD7B56D.toInt()
         } else {
             0x554B4A45
         }
@@ -435,7 +428,7 @@ class GameHudView(
     }
 
     private fun drawFastForward(canvas: Canvas, s: MatchSnapshot, pulse: Float) {
-        paint.color = if (pressedFf) 0xAA3A3428.toInt() else 0x7A1B1A17
+        paint.color = if (touchController.isPressed(HudPress.FAST_FORWARD)) 0xAA3A3428.toInt() else 0x7A1B1A17
         canvas.drawRoundRect(ffRect, dp(18f), dp(18f), paint)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = dp(1f)
@@ -460,63 +453,55 @@ class GameHudView(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val s = snapshot ?: return false
-        val x = event.x
-        val y = event.y
+        if (snapshot == null) return false
+        val controller = touchController
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                if (pauseRect.contains(x, y)) {
-                    pressedPause = true
-                } else if (s.state == SessionState.SIMULATING && ffRect.contains(x, y)) {
-                    pressedFf = true
-                } else if (canShoot(s) && hypot(x - shootCenter.x, y - shootCenter.y) <= shootRadius * 1.15f) {
-                    pressedShoot = true
-                    onUiTap?.invoke()
-                } else if (powerTouch.contains(x, y)) {
-                    dragPower = true
-                    updatePower(s, y)
-                } else if (hypot(x - spinCenter.x, y - spinCenter.y) <= spinRadius * 1.12f) {
-                    dragSpin = true
-                    updateSpin(s, x, y)
-                } else if (y > safeT + dp(112f) && (s.state == SessionState.AIMING || s.state == SessionState.BALL_IN_HAND)) {
-                    dragAim = true
-                    aimAt(s, x, y)
-                }
-                invalidate()
+            MotionEvent.ACTION_DOWN -> dispatchTouch(controller.onDown(event.getPointerId(0), event.x, event.y))
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                val idx = event.actionIndex
+                dispatchTouch(controller.onDown(event.getPointerId(idx), event.getX(idx), event.getY(idx)))
             }
             MotionEvent.ACTION_MOVE -> {
-                if (dragPower) updatePower(s, y)
-                if (dragSpin) updateSpin(s, x, y)
-                if (dragAim) aimAt(s, x, y)
-                invalidate()
+                for (i in 0 until event.pointerCount) {
+                    dispatchTouch(controller.onMove(event.getPointerId(i), event.getX(i), event.getY(i)))
+                }
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                val idx = event.actionIndex
+                dispatchTouch(controller.onUp(event.getPointerId(idx), event.getX(idx), event.getY(idx)))
+                performClick()
             }
             MotionEvent.ACTION_UP -> {
-                if (pressedPause) onPause?.invoke()
-                else if (pressedFf) onFastForward?.invoke()
-                else if (pressedShoot && canShoot(s)) onShoot?.invoke()
-                else if (dragAim && s.state == SessionState.BALL_IN_HAND) {
-                    screenToTable?.invoke(x, y)?.let { onPlaceCue?.invoke(it) }
-                }
+                dispatchTouch(controller.onUp(event.getPointerId(0), event.x, event.y))
                 performClick()
-                pressedPause = false
-                pressedFf = false
-                pressedShoot = false
-                dragPower = false
-                dragSpin = false
-                dragAim = false
-                invalidate()
             }
-            MotionEvent.ACTION_CANCEL -> {
-                pressedPause = false
-                pressedFf = false
-                pressedShoot = false
-                dragPower = false
-                dragSpin = false
-                dragAim = false
-                invalidate()
+            MotionEvent.ACTION_CANCEL -> controller.onCancel()
+        }
+        invalidate()
+        return true
+    }
+
+    private fun dispatchTouch(effects: List<HudEffect>) {
+        effects.forEach { effect ->
+            when (effect) {
+                is HudEffect.PowerChanged -> {
+                    localPower = effect.value.toFloat()
+                    onPower?.invoke(effect.value)
+                }
+                is HudEffect.SpinChanged -> {
+                    // Engine spin is [-0.5, 0.5]; the on-screen disc uses [-1, 1].
+                    localSide = (effect.side * 2.0).toFloat().coerceIn(-1f, 1f)
+                    localVertical = (effect.vertical * 2.0).toFloat().coerceIn(-1f, 1f)
+                    onSpin?.invoke(effect.side, effect.vertical)
+                }
+                is HudEffect.AimAt -> onAimPoint?.invoke(effect.point)
+                is HudEffect.PlaceCue -> onPlaceCue?.invoke(effect.point)
+                HudEffect.Shoot -> onShoot?.invoke()
+                HudEffect.Pause -> onPause?.invoke()
+                HudEffect.FastForward -> onFastForward?.invoke()
+                HudEffect.UiTap -> onUiTap?.invoke()
             }
         }
-        return true
     }
 
     override fun performClick(): Boolean {
@@ -524,37 +509,8 @@ class GameHudView(
         return true
     }
 
-    private fun aimAt(s: MatchSnapshot, x: Float, y: Float) {
-        val point = screenToTable?.invoke(x, y) ?: return
-        localAimPoint = point
-        if (s.state == SessionState.BALL_IN_HAND) return
-        onAimPoint?.invoke(point)
-    }
-
-    private fun canShoot(s: MatchSnapshot): Boolean =
-        s.state == SessionState.AIMING && humanTurn(s)
-
     private fun humanTurn(s: MatchSnapshot): Boolean =
         s.mode == GameMode.PRACTICE || s.currentPlayer == 0
-
-    private fun updatePower(s: MatchSnapshot, y: Float) {
-        val v = ((powerRect.bottom - y) / powerRect.height()).coerceIn(0.05f, 1f)
-        localPower = v
-        onPower?.invoke(v.toDouble())
-    }
-
-    private fun updateSpin(s: MatchSnapshot, x: Float, y: Float) {
-        var dx = (x - spinCenter.x) / (spinRadius * 0.72f)
-        var dy = -(y - spinCenter.y) / (spinRadius * 0.72f)
-        val len = hypot(dx, dy)
-        if (len > 1f) {
-            dx /= len
-            dy /= len
-        }
-        localSide = dx.coerceIn(-1f, 1f)
-        localVertical = dy.coerceIn(-1f, 1f)
-        onSpin?.invoke((localSide * 0.5).toDouble(), (localVertical * 0.5).toDouble())
-    }
 
     private fun remaining(s: MatchSnapshot, group: BallGroup?): Int {
         if (group == null || group == BallGroup.UNKNOWN) return 0
