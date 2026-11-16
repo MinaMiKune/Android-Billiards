@@ -26,6 +26,8 @@ import com.minamikune.billiards.game.SessionState
 import com.minamikune.billiards.gl.TableRenderer
 import com.minamikune.billiards.haptics.Haptics
 import com.minamikune.billiards.platform.ActivityResources
+import com.minamikune.billiards.platform.FoldLayoutGuide
+import com.minamikune.billiards.platform.FoldPostureTracker
 import com.minamikune.billiards.platform.SafeInsets
 import com.minamikune.billiards.physics.PhysicsEvent
 import com.minamikune.billiards.physics.Vec2
@@ -56,6 +58,36 @@ class MainActivity : Activity() {
     private var engine: MatchEngine? = null
     private var loop: GameLoop? = null
     private var loopGeneration = 0
+
+    /**
+     * Foldable posture tracking (stage 6). Emits on the main thread whenever
+     * androidx.window reports a fold change, and is re-seeded on every content
+     * relayout (rotation, multi-window resize) so guide margins always match
+     * the current window size.
+     */
+    private var foldTracker: FoldPostureTracker? = null
+    private var foldGuide: FoldLayoutGuide? = null
+
+    private val foldLayoutListener = View.OnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+        foldTracker?.onWindowSize(right - left, bottom - top)
+    }
+
+    /**
+     * Fans a fresh fold guide out to every consumer. HUD/menu update on the
+     * main thread; the renderer's camera is recomputed on its GL thread.
+     * FLAT guides restore the baseline phone/tablet layout.
+     */
+    private fun applyFoldGuide(guide: FoldLayoutGuide) {
+        foldGuide = guide
+        if (::hud.isInitialized) hud.setFoldLayout(guide)
+        if (::menu.isInitialized) menu.setFoldLayout(guide)
+        val r = renderer
+        val gl = surface
+        if (r != null && gl != null) {
+            r.setFoldLayout(guide)
+            gl.queueEvent { r.onFoldLayoutChanged() }
+        }
+    }
 
     private var gameActive = false
     private var gameOverHandled = false
@@ -113,6 +145,18 @@ class MainActivity : Activity() {
         }
         root.addView(hud, match())
         root.addView(menu, match())
+
+        // Fold posture tracking: safe on all devices — phones and fully-open
+        // foldables simply keep reporting FLAT, which every consumer treats as
+        // the baseline layout.
+        foldTracker = FoldPostureTracker(
+            this,
+            resources.displayMetrics.density,
+            ::applyFoldGuide,
+        ).also {
+            it.start()
+            root.addOnLayoutChangeListener(foldLayoutListener)
+        }
 
         demoEngine = MatchEngine(GameMode.PRACTICE, startsWithBreak = false)
         installSurface(demoEngine!!)
@@ -234,6 +278,12 @@ class MainActivity : Activity() {
         renderer = r
         gl.setRenderer(r)
         gl.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+        // Re-seed the fold guide so a freshly created renderer (quality switch,
+        // engine swap) inherits the current posture instead of waiting for the
+        // next fold event — a recreated renderer used to draw the full-window
+        // camera while the HUD was already folded.
+        r.setFoldLayout(foldGuide)
+        gl.queueEvent { r.onFoldLayoutChanged() }
         root.addView(gl, 0, match())
         surface = gl
         if (resumed) gl.onResume()
@@ -548,6 +598,9 @@ class MainActivity : Activity() {
         loop?.stop()
         loop = null
         loopGeneration++
+        if (::root.isInitialized) root.removeOnLayoutChangeListener(foldLayoutListener)
+        foldTracker?.stop()
+        foldTracker = null
         if (::splash.isInitialized) splash.onFinished = null
         if (::activityResources.isInitialized) activityResources.close()
         super.onDestroy()

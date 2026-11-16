@@ -14,6 +14,9 @@ import com.minamikune.billiards.data.Prefs
 import com.minamikune.billiards.game.GameMode
 import com.minamikune.billiards.game.MatchSnapshot
 import com.minamikune.billiards.game.SessionState
+import com.minamikune.billiards.platform.FRect
+import com.minamikune.billiards.platform.FoldLayoutGuide
+import com.minamikune.billiards.platform.FoldPosture
 import com.minamikune.billiards.resources.FontSet
 import kotlin.math.max
 import kotlin.math.min
@@ -54,6 +57,9 @@ class MenuView(
     private var safeT = 0
     private var safeR = 0
     private var safeB = 0
+
+    /** Foldable layout guide; FLAT/null keeps the full-window stage 5 layout. */
+    private var foldGuide: FoldLayoutGuide? = null
     private val d = resources.displayMetrics.density
     private val scaled = d * resources.configuration.fontScale
 
@@ -97,6 +103,18 @@ class MenuView(
         safeT = t
         safeR = r
         safeB = b
+        rebuild()
+        invalidate()
+    }
+
+    /**
+     * Foldable layout guide from [com.minamikune.billiards.platform.FoldPostureTracker].
+     * In the tabletop posture menu panels/buttons are confined to the upper
+     * (table viewport) half so nothing sits across the crease or under the
+     * lower control zone; FLAT/null keeps the stage 5 layout. UI thread only.
+     */
+    fun setFoldLayout(guide: FoldLayoutGuide?) {
+        foldGuide = guide
         rebuild()
         invalidate()
     }
@@ -169,6 +187,16 @@ class MenuView(
 
     // ---------------------------------------------------------------- layout
 
+    /**
+     * Region menu content is laid out into: the fold guide's table viewport
+     * for the tabletop posture, the full window otherwise. With no guide this
+     * is FRect(0, 0, width, height), so every formula below reduces to the
+     * exact stage 5 computation.
+     */
+    private fun contentArea(): FRect =
+        foldGuide?.takeIf { it.posture == FoldPosture.TABLETOP }?.tableViewport
+            ?: FRect(0f, 0f, width.toFloat(), height.toFloat())
+
     private fun rebuild() {
         if (width == 0 || height == 0) return
         buttons.clear()
@@ -183,6 +211,11 @@ class MenuView(
     }
 
     private fun layoutMain(landscape: Boolean) {
+        val area = contentArea()
+        val ax = area.left
+        val ay = area.top
+        val aw = area.width
+        val ah = area.height
         val port = !landscape
         val items = mutableListOf<Triple<String, String, String?>>()
         if (hasSave) items += Triple("continue", "继续比赛", "CONTINUE")
@@ -197,33 +230,33 @@ class MenuView(
         val x: Float
         var startY: Float
         if (port) {
-            bh = if (height < dp(620f)) dp(48f) else dp(54f)
+            bh = if (ah < dp(620f)) dp(48f) else dp(54f)
             gap = dp(10f)
-            bw = min(width - safeL - safeR - dp(44f), dp(400f))
-            x = (width - bw) / 2f
+            bw = min(aw - safeL - safeR - dp(44f), dp(400f))
+            x = ax + (aw - bw) / 2f
             var total = items.size * bh + (items.size - 1) * gap
-            val minY = safeT + if (height < dp(620f)) height * 0.36f else height * 0.43f
-            val maxY = height - safeB - dp(18f) - total
+            val minY = ay + safeT + if (ah < dp(620f)) ah * 0.36f else ah * 0.43f
+            val maxY = ay + ah - safeB - dp(18f) - total
             startY = max(minY, maxY)
             // Short phones: shrink the stack until it fits above the safe area.
-            while (startY + total > height - safeB - dp(14f) && bh > dp(34f)) {
+            while (startY + total > ay + ah - safeB - dp(14f) && bh > dp(34f)) {
                 bh -= dp(2f)
                 gap = max(dp(4f), gap - dp(1f))
                 total = items.size * bh + (items.size - 1) * gap
-                startY = max(minY, height - safeB - dp(18f) - total)
+                startY = max(minY, ay + ah - safeB - dp(18f) - total)
             }
         } else {
             bh = dp(48f)
             gap = dp(9f)
-            bw = min(width * 0.38f, dp(430f))
-            x = min(width * 0.56f, width - safeR - dp(16f) - bw)
+            bw = min(aw * 0.38f, dp(430f))
+            x = ax + min(aw * 0.56f, aw - safeR - dp(16f) - bw)
             var total = items.size * bh + (items.size - 1) * gap
-            if (total > height - safeT - safeB - dp(26f)) {
+            if (total > ah - safeT - safeB - dp(26f)) {
                 bh = dp(38f)
                 gap = dp(6f)
                 total = items.size * bh + (items.size - 1) * gap
             }
-            startY = (height - total) / 2f + dp(4f)
+            startY = ay + (ah - total) / 2f + dp(4f)
         }
         items.forEachIndexed { i, item ->
             buttons += Btn(
@@ -235,10 +268,11 @@ class MenuView(
     }
 
     private fun layoutPause() {
-        val w = min(width - safeL - safeR - dp(40f), dp(430f))
-        val h = min(height - safeT - safeB - dp(30f), dp(384f))
-        val left = (width - w) / 2f
-        val top = (height - h) / 2f
+        val area = contentArea()
+        val w = min(area.width - safeL - safeR - dp(40f), dp(430f))
+        val h = min(area.height - safeT - safeB - dp(30f), dp(384f))
+        val left = area.left + (area.width - w) / 2f
+        val top = area.top + (area.height - h) / 2f
         panel.set(left, top, left + w, top + h)
         val bw = w - dp(48f)
         val bx = left + dp(24f)
@@ -256,10 +290,11 @@ class MenuView(
     }
 
     private fun layoutResult() {
-        val w = min(width - safeL - safeR - dp(40f), dp(440f))
-        val h = min(height - safeT - safeB - dp(24f), dp(318f))
-        val left = (width - w) / 2f
-        val top = (height - h) / 2f
+        val area = contentArea()
+        val w = min(area.width - safeL - safeR - dp(40f), dp(440f))
+        val h = min(area.height - safeT - safeB - dp(24f), dp(318f))
+        val left = area.left + (area.width - w) / 2f
+        val top = area.top + (area.height - h) / 2f
         panel.set(left, top, left + w, top + h)
         val bw = w - dp(48f)
         val bx = left + dp(24f)
@@ -272,10 +307,11 @@ class MenuView(
     }
 
     private fun layoutSettings() {
-        val w = min(width - safeL - safeR - dp(32f), dp(560f))
-        val top = safeT + dp(76f)
-        val h = min(height - top - safeB - dp(12f), dp(466f)).coerceAtLeast(dp(220f))
-        val left = (width - w) / 2f
+        val area = contentArea()
+        val w = min(area.width - safeL - safeR - dp(32f), dp(560f))
+        val top = area.top + safeT + dp(76f)
+        val h = min(area.height - (top - area.top) - safeB - dp(12f), dp(466f)).coerceAtLeast(dp(220f))
+        val left = area.left + (area.width - w) / 2f
         panel.set(left, top, left + w, top + h)
         val rowH = min(dp(62f), max(dp(40f), h * 0.17f))
         val bx = left + dp(20f)
@@ -296,10 +332,11 @@ class MenuView(
     }
 
     private fun layoutHelp() {
-        val w = min(width - safeL - safeR - dp(32f), dp(600f))
-        val top = safeT + dp(82f)
-        val h = min(height - top - safeB - dp(16f), dp(520f))
-        val left = (width - w) / 2f
+        val area = contentArea()
+        val w = min(area.width - safeL - safeR - dp(32f), dp(600f))
+        val top = area.top + safeT + dp(82f)
+        val h = min(area.height - (top - area.top) - safeB - dp(16f), dp(520f))
+        val left = area.left + (area.width - w) / 2f
         panel.set(left, top, left + w, top + h)
         backRect.set(safeL + dp(16f), safeT + dp(16f), safeL + dp(58f), safeT + dp(58f))
     }

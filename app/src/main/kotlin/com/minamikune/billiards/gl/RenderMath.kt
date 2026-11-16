@@ -99,11 +99,37 @@ object RenderMath {
         return cue + d * best.coerceAtLeast(0.0)
     }
 
-    /** Converts a view-space touch into physical table coordinates, or null if it misses. */
-    fun screenToTable(invViewProj: FloatArray, width: Int, height: Int, portrait: Boolean, px: Float, py: Float): Vec2? {
+    /**
+     * Converts a view-space touch into physical table coordinates, or null if
+     * it misses.
+     *
+     * Stage 6: the optional [viewLeft]/[viewTop]/[viewRight]/[viewBottom]
+     * rect restricts both the accepted touch range and the projection to a
+     * sub-viewport of the surface (foldable tabletop posture renders the table
+     * into only the upper half). The defaults cover the whole surface, making
+     * this call byte-for-byte equivalent to the pre-stage-6 behavior.
+     */
+    fun screenToTable(
+        invViewProj: FloatArray,
+        width: Int,
+        height: Int,
+        portrait: Boolean,
+        px: Float,
+        py: Float,
+        viewLeft: Int = 0,
+        viewTop: Int = 0,
+        viewRight: Int = width,
+        viewBottom: Int = height,
+    ): Vec2? {
         if (width <= 0 || height <= 0) return null
-        val x = 2f * px / width - 1f
-        val y = 1f - 2f * py / height
+        val vw = (viewRight - viewLeft).toFloat()
+        val vh = (viewBottom - viewTop).toFloat()
+        if (vw <= 0f || vh <= 0f) return null
+        val nx = (px - viewLeft) / vw
+        val ny = (py - viewTop) / vh
+        if (nx < 0f || nx > 1f || ny < 0f || ny > 1f) return null
+        val x = 2f * nx - 1f
+        val y = 1f - 2f * ny
         val near = Mat4.transformPoint(invViewProj, x, y, -1f)
         val far = Mat4.transformPoint(invViewProj, x, y, 1f)
         val dy = far.y - near.y
@@ -117,11 +143,25 @@ object RenderMath {
         return TableSpace.worldToTable(wx, wz, portrait)
     }
 
-    fun tableToScreen(viewProj: FloatArray, width: Int, height: Int, portrait: Boolean, x: Double, z: Double): Vec2? {
+    fun tableToScreen(
+        viewProj: FloatArray,
+        width: Int,
+        height: Int,
+        portrait: Boolean,
+        x: Double,
+        z: Double,
+        viewLeft: Int = 0,
+        viewTop: Int = 0,
+        viewRight: Int = width,
+        viewBottom: Int = height,
+    ): Vec2? {
         if (width <= 0 || height <= 0) return null
         val world = TableSpace.tableToWorld(x, z, portrait)
         val p = Mat4.transformPoint(viewProj, world.x.toFloat(), 0f, world.y.toFloat())
         if (p.z < -1.0 || p.z > 1.0) return null
-        return Vec2((p.x + 1.0) * 0.5 * width, (1.0 - p.y) * 0.5 * height)
+        val vw = (viewRight - viewLeft).toFloat()
+        val vh = (viewBottom - viewTop).toFloat()
+        if (vw <= 0f || vh <= 0f) return null
+        return Vec2(viewLeft + (p.x + 1.0) * 0.5 * vw, viewTop + (1.0 - p.y) * 0.5 * vh)
     }
 }

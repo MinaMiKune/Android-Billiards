@@ -12,6 +12,9 @@ import com.minamikune.billiards.physics.TableSpace
 import com.minamikune.billiards.physics.TableSpec
 import com.minamikune.billiards.physics.Vec2
 import com.minamikune.billiards.physics.Vec3
+import com.minamikune.billiards.platform.FRect
+import com.minamikune.billiards.platform.FoldLayoutGuide
+import com.minamikune.billiards.platform.FoldPosture
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -51,6 +54,15 @@ class TableRenderer(
     private var portrait = false
     private var surfaceW = 1
     private var surfaceH = 1
+
+    /**
+     * Latest foldable layout guide (stage 6). Written from any thread via
+     * [setFoldLayout]; read on the GL thread inside [updateCamera],
+     * [onDrawFrame] and the touch-mapping helpers. FLAT/null draws exactly
+     * like the pre-foldable full-window path.
+     */
+    @Volatile
+    private var foldGuide: FoldLayoutGuide? = null
     private var eye = Vec3(0.0, 5.0, 2.0)
     private var elapsed = 0f
     private var lastNanos = 0L
@@ -176,10 +188,44 @@ class TableRenderer(
         surfaceW = max(1, width)
         surfaceH = max(1, height)
         GLES30.glViewport(0, 0, width, height)
+        updateCamera()
+    }
+
+    /** Stores the guide from any thread; does not itself touch GL. */
+    fun setFoldLayout(guide: FoldLayoutGuide?) {
+        foldGuide = guide
+    }
+
+    /**
+     * Recomputes the camera on the GL thread (call via
+     * `GLSurfaceView.queueEvent` or from `onSurfaceChanged`) so a fold
+     * transition does not have to wait for a surface resize.
+     */
+    fun onFoldLayoutChanged() {
+        updateCamera()
+    }
+
+    /**
+     * Sub-viewport the table is framed into: the guide's upper half for the
+     * tabletop posture, the whole surface otherwise. GL-thread only.
+     */
+    private fun activeViewport(): FRect? {
+        val vp = foldGuide?.takeIf { it.posture == FoldPosture.TABLETOP }?.tableViewport
+        return if (vp != null && vp.width > 0f && vp.height > 0f) vp else null
+    }
+
+    /** Rebuilds root/proj/view matrices for the current size and fold guide. */
+    private fun updateCamera() {
         synchronized(lock) {
-            portrait = height > width
+            val w = surfaceW
+            val h = surfaceH
+            if (w <= 0 || h <= 0) return
+            portrait = h > w
             root = if (portrait) Mat4.rotateY((Math.PI / 2.0).toFloat()) else Mat4.identity()
-            val aspect = width.toFloat() / height.toFloat()
+            // In tabletop posture the table is framed into the upper half, so
+            // the projection aspect must match the viewport, not the surface.
+            val vp = activeViewport()
+            val aspect = if (vp != null) vp.width / vp.height else w.toFloat() / h.toFloat()
             proj = Mat4.perspective(36f, aspect, 0.05f, 40f)
             val fit = RenderMath.fitCamera(proj, portrait)
             eye = fit.eye
@@ -198,7 +244,24 @@ class TableRenderer(
 
         copyState(dt)
 
+        // Foldable tabletop: the lower control half of the window must stay at
+        // the clear color behind the Canvas HUD, so clear full-surface first
+        // and then restrict all table drawing to the upper viewport via
+        // scissor + viewport. GL y grows upward, so the top band of the
+        // window maps to the top of the surface here.
+        val vp = activeViewport()
+        GLES30.glDisable(GLES30.GL_SCISSOR_TEST)
+        GLES30.glViewport(0, 0, surfaceW, surfaceH)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
+        if (vp != null) {
+            val vx = vp.left.toInt().coerceIn(0, surfaceW)
+            val vy = (surfaceH - vp.bottom).toInt().coerceIn(0, surfaceH)
+            val vw = vp.width.toInt().coerceIn(1, surfaceW - vx)
+            val vh = vp.height.toInt().coerceIn(1, surfaceH - vy)
+            GLES30.glViewport(vx, vy, vw, vh)
+            GLES30.glEnable(GLES30.GL_SCISSOR_TEST)
+            GLES30.glScissor(vx, vy, vw, vh)
+        }
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthMask(true)
 
@@ -209,6 +272,10 @@ class TableRenderer(
         drawAimGuide()
         drawBalls()
         drawCue()
+        if (vp != null) {
+            GLES30.glDisable(GLES30.GL_SCISSOR_TEST)
+            GLES30.glViewport(0, 0, surfaceW, surfaceH)
+        }
         GlUtil.checkError("frame")
     }
 
@@ -662,7 +729,14 @@ class TableRenderer(
             m = invViewProj.copyOf()
             isPortrait = portrait
         }
-        return RenderMath.screenToTable(m, surfaceW, surfaceH, isPortrait, px, py)
+        // Viewport-aware (foldable tabletop): touches outside the table
+        // viewport cannot resolve onto the table.
+        return activeViewport()?.let { vp ->
+            RenderMath.screenToTable(
+                m, surfaceW, surfaceH, isPortrait, px, py,
+                vp.left.toInt(), vp.top.toInt(), vp.right.toInt(), vp.bottom.toInt(),
+            )
+        } ?: RenderMath.screenToTable(m, surfaceW, surfaceH, isPortrait, px, py)
     }
 
     fun tableToScreen(x: Double, z: Double): Vec2? {
@@ -673,7 +747,12 @@ class TableRenderer(
             m = viewProj.copyOf()
             isPortrait = portrait
         }
-        return RenderMath.tableToScreen(m, surfaceW, surfaceH, isPortrait, x, z)
+        return activeViewport()?.let { vp ->
+            RenderMath.tableToScreen(
+                m, surfaceW, surfaceH, isPortrait, x, z,
+                vp.left.toInt(), vp.top.toInt(), vp.right.toInt(), vp.bottom.toInt(),
+            )
+        } ?: RenderMath.tableToScreen(m, surfaceW, surfaceH, isPortrait, x, z)
     }
 
     companion object {

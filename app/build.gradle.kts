@@ -57,6 +57,13 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    // Stage 6 (Android 17 / foldables): androidx.window reports fold postures
+    // (FoldingFeature) so the HUD/menus/camera can adapt; coroutines-android
+    // provides Dispatchers.Main for the WindowLayoutInfo collector. 1.8.1 aligns
+    // with the coroutines BOM constraint that androidx.test pulls in, so the
+    // unit-test and androidTest classpaths resolve the same version.
+    implementation("androidx.window:window:1.3.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation(kotlin("test"))
     androidTestImplementation("androidx.test:runner:1.7.0")

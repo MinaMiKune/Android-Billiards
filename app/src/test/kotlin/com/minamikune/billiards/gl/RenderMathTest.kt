@@ -150,6 +150,68 @@ class RenderMathTest {
         assertNull(RenderMath.tableToScreen(cam.viewProj, 0, 1080, false, 0.0, 0.0))
     }
 
+    // ---- foldable viewport (stage 6) -------------------------------------
+
+    @Test
+    fun defaultViewportCoversTheWholeSurface() {
+        // Omitting the viewport rect must stay byte-for-byte the old behavior.
+        val w = 2400
+        val h = 1080
+        val cam = camera(w, h, false)
+        val sDefault = RenderMath.tableToScreen(cam.viewProj, w, h, false, 0.5, 0.0)
+        val sExplicit = RenderMath.tableToScreen(cam.viewProj, w, h, false, 0.5, 0.0, 0, 0, w, h)
+        assertNotNull(sDefault)
+        assertEquals(sDefault!!.x, sExplicit!!.x, 1e-6)
+        assertEquals(sDefault.y, sExplicit.y, 1e-6)
+        val tDefault = RenderMath.screenToTable(cam.invViewProj, w, h, false, 300f, 200f)
+        val tExplicit = RenderMath.screenToTable(cam.invViewProj, w, h, false, 300f, 200f, 0, 0, w, h)
+        assertNotNull(tDefault)
+        assertEquals(tDefault!!.x, tExplicit!!.x, 1e-9)
+        assertEquals(tDefault.y, tExplicit.y, 1e-9)
+    }
+
+    @Test
+    fun viewportRestrictedMappingRoundTripsWithinTheViewport() {
+        // Foldable tabletop: 1600x1600 surface, table framed into the upper
+        // 1600x752 viewport (camera fit uses the viewport aspect).
+        val vw = 1600
+        val vh = 752
+        val cam = camera(vw, vh, false)
+        var checked = 0
+        var x = -1.15
+        while (x <= 1.15) {
+            var z = -0.58
+            while (z <= 0.58) {
+                val s = RenderMath.tableToScreen(cam.viewProj, 1600, 1600, false, x, z, 0, 0, vw, vh)
+                assertNotNull("table point must be visible in the viewport", s)
+                assertTrue("mapped point stays inside the viewport", s!!.x in 0.0..vw.toDouble() && s.y in 0.0..vh.toDouble())
+                val back = RenderMath.screenToTable(cam.invViewProj, 1600, 1600, false, s.x.toFloat(), s.y.toFloat(), 0, 0, vw, vh)
+                assertNotNull("viewport point must unproject", back)
+                assertEquals("x round trip in viewport", x, back!!.x, 1e-2)
+                assertEquals("z round trip in viewport", z, back.y, 1e-2)
+                checked++
+                z += 0.115
+            }
+            x += 0.23
+        }
+        assertTrue("grid exercised", checked > 50)
+    }
+
+    @Test
+    fun touchesOutsideTheViewportAreRejected() {
+        val vw = 1600
+        val vh = 752
+        val cam = camera(vw, vh, false)
+        // Below the viewport (the tabletop control zone) must not map onto the table.
+        assertNull(RenderMath.screenToTable(cam.invViewProj, 1600, 1600, false, 800f, 1200f, 0, 0, vw, vh))
+        // Just past the right/bottom edges of the viewport rect.
+        assertNull(RenderMath.screenToTable(cam.invViewProj, 1600, 1600, false, 1610f, 100f, 0, 0, vw, vh))
+        assertNull(RenderMath.screenToTable(cam.invViewProj, 1600, 1600, false, 100f, 762f, 0, 0, vw, vh))
+        // Degenerate viewport rect is rejected, not NaN'd.
+        assertNull(RenderMath.screenToTable(cam.invViewProj, 1600, 1600, false, 100f, 100f, 0, 0, 0, 752))
+        assertNull(RenderMath.tableToScreen(cam.viewProj, 1600, 1600, false, 0.5, 0.0, 0, 0, vw, 0))
+    }
+
     // ---- aim targeting ---------------------------------------------------
 
     @Test

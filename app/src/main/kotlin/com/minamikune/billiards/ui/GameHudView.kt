@@ -15,6 +15,7 @@ import com.minamikune.billiards.game.MatchSnapshot
 import com.minamikune.billiards.game.SessionState
 import com.minamikune.billiards.physics.BallGroup
 import com.minamikune.billiards.physics.Vec2
+import com.minamikune.billiards.platform.FoldLayoutGuide
 import com.minamikune.billiards.resources.FontSet
 import kotlin.math.max
 import kotlin.math.min
@@ -71,6 +72,7 @@ class GameHudView(
     // Geometry, kept in android.graphics form for drawing; the canonical
     // values come from computeHudLayout (shared with the touch controller).
     private var hudLayout: HudLayout? = null
+    private var foldGuide: FoldLayoutGuide? = null
     private val powerRect = RectF()
     private val pauseRect = RectF()
     private val shootCenter = android.graphics.PointF()
@@ -86,7 +88,7 @@ class GameHudView(
 
     private val touchController by lazy {
         HudTouchController(
-            layout = { hudLayout ?: computeHudLayout(width, height, safeL, safeT, safeR, safeB, d) },
+            layout = { hudLayout ?: computeHudLayout(width, height, safeL, safeT, safeR, safeB, d, foldGuide) },
             context = {
                 snapshot?.let {
                     HudTouchContext(
@@ -123,13 +125,24 @@ class GameHudView(
         invalidate()
     }
 
+    /**
+     * Foldable layout guide from [com.minamikune.billiards.platform.FoldPostureTracker].
+     * FLAT or null keeps the stage 5 baseline geometry; TABLETOP/BOOK re-arrange
+     * controls around the fold. Must be called on the UI thread.
+     */
+    fun setFoldLayout(guide: FoldLayoutGuide?) {
+        foldGuide = guide
+        if (width > 0 && height > 0) layoutControls(width, height)
+        invalidate()
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         layoutControls(w, h)
     }
 
     private fun layoutControls(w: Int, h: Int) {
-        val l = computeHudLayout(w, h, safeL, safeT, safeR, safeB, d)
+        val l = computeHudLayout(w, h, safeL, safeT, safeR, safeB, d, foldGuide)
         hudLayout = l
         powerRect.set(l.powerRect.left, l.powerRect.top, l.powerRect.right, l.powerRect.bottom)
         pauseRect.set(l.pauseRect.left, l.pauseRect.top, l.pauseRect.right, l.pauseRect.bottom)

@@ -8,7 +8,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.minamikune.billiards.data.Prefs
 import com.minamikune.billiards.game.GameMode
 import com.minamikune.billiards.game.MatchEngine
+import com.minamikune.billiards.platform.FoldHinge
+import com.minamikune.billiards.platform.FoldLayoutGuide
+import com.minamikune.billiards.platform.FoldOrientation
 import com.minamikune.billiards.platform.GameConfig
+import com.minamikune.billiards.platform.computeFoldLayout
 import com.minamikune.billiards.resources.FontSet
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -59,11 +63,43 @@ class MenuRenderTest {
         for ((w, h) in sizes()) draw(hud, w, h)
     }
 
+    @Test
+    fun hudAndMenusDrawInTabletopFoldPosture() {
+        // Foldable half-opened: the upper half shows the table viewport, the
+        // lower half hosts controls. Every screen must lay out without
+        // straddling the crease band or crashing the real draw path.
+        val guide = tabletopGuide()
+        val engine = MatchEngine(GameMode.VS_AI)
+
+        val hud = GameHudView(context)
+        hud.setSafeInsets(32, 72, 32, 48)
+        hud.setFoldLayout(guide)
+        hud.setSnapshot(engine.snapshot())
+        draw(hud, 1600, 1600)
+
+        val menu = MenuView(context, Prefs(context))
+        menu.setSafeInsets(32, 72, 32, 48)
+        menu.setFoldLayout(guide)
+        menu.showMain(saveAvailable = true)
+        draw(menu, 1600, 1600)
+        menu.showPause(engine.snapshot())
+        draw(menu, 1600, 1600)
+        menu.showResult(true, "Cleared the table", 21, 0)
+        draw(menu, 1600, 1600)
+    }
+
+    private fun tabletopGuide(): FoldLayoutGuide {
+        val hinge = FoldHinge(FoldOrientation.HORIZONTAL, center = 800f, thickness = 16f, halfOpened = true)
+        return computeFoldLayout(windowW = 1600f, windowH = 1600f, hinge = hinge, marginPx = 40f)
+    }
+
     private fun sizes() = listOf(
         1080 to 2400, // tall phone
         2400 to 1080, // landscape phone
         1600 to 2560, // tablet
         900 to 1600,  // small foldable inner display
+        1812 to 2176, // large foldable inner display (tabletop capable)
+        1280 to 720,  // desktop freeform window
     )
 
     private fun draw(view: View, w: Int, h: Int) {
