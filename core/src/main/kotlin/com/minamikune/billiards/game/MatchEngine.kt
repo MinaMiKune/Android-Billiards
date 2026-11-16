@@ -345,7 +345,12 @@ class MatchEngine(
         if (mode == GameMode.VS_AI && currentPlayer == 1) {
             state = SessionState.AI_THINKING
             aiTimer = 0.9
-            message = "DeepSeek AI is thinking…"
+            // Keep the foul explanation visible, as in the human branch below.
+            if (!(message.startsWith("No ") || message.startsWith("Wrong") ||
+                    message.startsWith("Illegal") || message.startsWith("Cue"))
+            ) {
+                message = "DeepSeek AI is thinking…"
+            }
         } else if (ballInHand) {
             state = SessionState.BALL_IN_HAND
             message = "Ball in hand · drag the cue ball"
@@ -532,7 +537,11 @@ class MatchEngine(
 
     fun restore(snapshot: MatchSnapshot) {
         world.restore(snapshot.balls)
-        state = snapshot.state
+        // A snapshot taken mid-shot captured balls in flight. After a process death
+        // the shot cannot be continued (the strike impulse is gone), and the restored
+        // table can never emit Settled because shotInFlight is cleared below — the
+        // match would deadlock in SIMULATING forever. Rewind such snapshots to AIMING.
+        state = if (snapshot.state == SessionState.SIMULATING) SessionState.AIMING else snapshot.state
         currentPlayer = snapshot.currentPlayer
         players = snapshot.players.toMutableList()
         ballInHand = snapshot.ballInHand

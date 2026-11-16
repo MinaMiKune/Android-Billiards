@@ -133,8 +133,18 @@ class Mesh private constructor(
     }
 }
 
+/**
+ * Geometry generators, split into pure data builders ([sphereData] etc.) and the
+ * GL upload wrapper ([sphere] etc.) so the vertex/index math can be unit-tested
+ * on the JVM without an OpenGL context.
+ */
 object Meshes {
     fun sphere(rings: Int = 24, segments: Int = 48): Mesh {
+        val (vertices, indices) = sphereData(rings, segments)
+        return Mesh.build(vertices, indices)
+    }
+
+    internal fun sphereData(rings: Int, segments: Int): Pair<FloatArray, ShortArray> {
         val verts = ArrayList<Float>()
         val idx = ArrayList<Short>()
         for (r in 0..rings) {

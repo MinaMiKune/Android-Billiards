@@ -175,6 +175,22 @@ class PhysicsWorld {
     fun step(dt: Double) {
         require(dt > 0.0 && dt <= 1.0 / 60.0) { "Physics step out of range: $dt" }
         events.clear()
+        // The sliding-friction torque is stiff: at large dt a single semi-implicit
+        // impulse can overshoot the spin it is damping, flipping the slip direction
+        // every step and pumping energy into a two-state limit cycle (observed in
+        // stage 3: balls buzzing across the table forever, the table never settling).
+        // Integrate internally at the GameLoop's native 1/480 cadence, which the
+        // stage-2 fuzz campaign validated, regardless of the caller's cadence.
+        val subDt = 1.0 / 480.0
+        var remaining = dt
+        while (remaining > 1e-12) {
+            val h = if (remaining < subDt) remaining else subDt
+            integrate(h)
+            remaining -= h
+        }
+    }
+
+    private fun integrate(dt: Double) {
         for (ball in balls) {
             if (!ball.active || ball.asleep) continue
             ball.previousPosition = ball.position
