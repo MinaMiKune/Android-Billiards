@@ -36,5 +36,8 @@ local.properties
 *.keystore
 .android-home/
 
+# 发布签名材料（keystore 与密码环境文件，永不入库）
+/.keystores/
+
 # 本地静态分析工具
 .tools/

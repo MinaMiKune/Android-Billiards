@@ -36,8 +36,15 @@ OpenGL ES 3.0。物理、规则、AI、渲染、Canvas UI、音频、触觉和�
 export GRADLE_USER_HOME="$PWD/.gradle-home"
 export ANDROID_USER_HOME="$PWD/.android-home"
 ./gradlew :core:test :app:testDebugUnitTest
-./gradlew :app:assembleDebug :app:assembleRelease
+./gradlew :app:assembleDebug :app:assembleRelease :app:bundleRelease
 ```
+
+`versionCode` 默认取 `git rev-list --count HEAD`，`versionName` 默认 `1.0.0`，
+可用 `-Pbilliards.versionCode=N` / `-Pbilliards.versionName=X` 覆盖。提供
+`RELEASE_KEYSTORE_PATH`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、
+`RELEASE_KEY_PASSWORD` 环境变量（或同名 gradle 属性）时 release APK/AAB
+自动签名，否则保持未签名；签名与发布流程见
+[`docs/release/SIGNING.md`](docs/release/SIGNING.md)。
 
 运行配置位于 `app/src/main/assets/game_config.properties`：启动页时长、循环快照
 间隔、高清内存阈值和音频流上限都在此集中管理，非法值会回退默认值。
@@ -45,7 +52,9 @@ export ANDROID_USER_HOME="$PWD/.android-home"
 APK 输出：
 
 - `app/build/outputs/apk/debug/app-debug.apk`（约 1.31 MiB）
-- `app/build/outputs/apk/release/app-release-unsigned.apk`（R8 构建，未签名，约 407 KiB）
+- `app/build/outputs/apk/release/app-release.apk`（R8 构建，有签名材料时签名，
+  否则为 `app-release-unsigned.apk`，约 500 KiB）
+- `app/build/outputs/bundle/release/app-release.aab`（签名 AAB，供商店分发）
 
 `local.properties` 需要指向本机 Android SDK；该文件和构建目录已被 `.gitignore` 忽略。
 
@@ -104,8 +113,11 @@ EGL 回收。对局快照同时写入 `onSaveInstanceState` 和 `SaveStore`，Ac
 - 清单声明 OpenGL ES 3.0 与触摸屏为必需特性；不支持 GLES3 的设备不会安装。
 - 未申请网络权限，游戏不收集或上传数据。
 - 当前只提供中文界面；`resourceConfigurations` 已限制为 zh/en，英文文案待补。
-- Release APK 使用仓库外的签名密钥，因此 CI 只发布可安装的 debug APK；
-  release 构建用于验证 R8/资源压缩。
+- Release 签名密钥不随仓库分发：本地或 CI 配置签名材料后自动产出签名的
+  release APK/AAB，未配置时产物保持未签名（不影响构建）；推 `v*` tag 且
+  secrets 齐全时 GitHub Actions 自动创建 GitHub Release（APK + AAB +
+  SHA-256 校验和 + R8 映射表），详见
+  [`docs/release/SIGNING.md`](docs/release/SIGNING.md)。
 
 ## 已知限制
 
