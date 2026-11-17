@@ -1,8 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <!-- Debug-build-only host for GlSmokeTest so the activity runs in the
+             app package's process (instrumentation cannot launch components
+             that live in the androidTest APK's separate package). -->
         <activity
             android:name="com.minamikune.billiards.gl.GlSmokeActivity"
-            android:exported="false"
+            android:exported="true"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
     </application>
 </manifest>
