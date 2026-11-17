@@ -222,7 +222,7 @@ jobs:
       - name: Run GL smoke and corruption-matrix tests on Android 17
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 37
+          api-level: 37.0
           target: google_apis
           arch: x86_64
           profile: pixel_6
